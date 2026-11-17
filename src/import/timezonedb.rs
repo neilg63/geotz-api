@@ -196,10 +196,9 @@ fn manifest_path(config: &Config) -> PathBuf {
     config.tz_dir.join(MANIFEST_FILE)
 }
 
+/// The release last fetched. The SQL file itself may have been discarded
+/// after import; only `--offline` needs it.
 fn local_release(config: &Config) -> Option<Release> {
-    if !sql_path(config).is_file() {
-        return None;
-    }
     let text = fs::read_to_string(manifest_path(config)).ok()?;
     serde_json::from_str(&text).ok()
 }
@@ -243,15 +242,20 @@ async fn ensure(config: &Config) -> Result<(String, Release, bool)> {
         let release = local.with_context(|| {
             format!("{} is missing and --offline was given", sql_path(config).display())
         })?;
+        let sql = fs::read_to_string(sql_path(config)).with_context(|| {
+            format!("{} is missing and --offline was given", sql_path(config).display())
+        })?;
         println!("  kept  {SQL_FILE} (offline)");
-        return Ok((fs::read_to_string(sql_path(config))?, release, false));
+        return Ok((sql, release, false));
     }
     let (sql, release) = match download(config).await {
         Ok(found) => found,
         Err(e) => {
             let Some(release) = local else { return Err(e) };
+            let sql = fs::read_to_string(sql_path(config))
+                .with_context(|| format!("cannot download the TimeZoneDB file and have no local copy: {e:#}"))?;
             println!("  kept  {SQL_FILE} (cannot check for updates: {e:#})");
-            return Ok((fs::read_to_string(sql_path(config))?, release, false));
+            return Ok((sql, release, false));
         }
     };
     if local.as_ref() == Some(&release) && !config.force {
@@ -266,6 +270,14 @@ async fn ensure(config: &Config) -> Result<(String, Release, bool)> {
     let dated = release.date.clone().unwrap_or_else(|| "undated".into());
     println!("  fetch {SQL_FILE} (release {dated})");
     Ok((sql, release, true))
+}
+
+/// Deletes the unpacked SQL file to free disk space. Returns bytes freed.
+pub fn discard_source(config: &Config) -> Result<u64> {
+    let path = sql_path(config);
+    let Ok(info) = fs::symlink_metadata(&path) else { return Ok(0) };
+    fs::remove_file(&path).with_context(|| format!("cannot delete {}", path.display()))?;
+    Ok(info.len())
 }
 
 /// Compares the server's release with the local copy. Returns `true` when an

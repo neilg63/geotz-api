@@ -111,6 +111,11 @@ struct FetchArgs {
     /// Never contact the servers; use the files already present
     #[arg(long, conflicts_with = "force")]
     offline: bool,
+
+    /// Do not check for enough free disk space before downloading and
+    /// loading
+    #[arg(long)]
+    no_space_check: bool,
 }
 
 #[derive(Args)]
@@ -134,6 +139,12 @@ struct BuildArgs {
     #[arg(long)]
     rebuild: bool,
 
+    /// Delete the downloaded source files once they are imported, to free
+    /// disk space. They are downloaded again only when a later import
+    /// needs them.
+    #[arg(long)]
+    discard_sources: bool,
+
     /// Abort, leaving the database unchanged, if a table's row count falls
     /// by more than this percentage since the last import (100 disables)
     #[arg(long, value_name = "PERCENT", default_value_t = 10.0)]
@@ -142,7 +153,14 @@ struct BuildArgs {
 
 impl Default for BuildArgs {
     fn default() -> Self {
-        BuildArgs { fcodes: None, languages: None, keep_unpopulated: false, rebuild: false, max_drop: 10.0 }
+        BuildArgs {
+            fcodes: None,
+            languages: None,
+            keep_unpopulated: false,
+            rebuild: false,
+            discard_sources: false,
+            max_drop: 10.0,
+        }
     }
 }
 
@@ -180,6 +198,7 @@ fn config(paths: Paths, fetch: FetchArgs, build: &BuildArgs) -> Result<Config> {
         keep_unpopulated: build.keep_unpopulated,
         force: fetch.force,
         offline: fetch.offline,
+        skip_space_check: fetch.no_space_check,
         max_drop_percent: build.max_drop,
     })
 }
@@ -208,6 +227,14 @@ where
     outcome.map(|_| ())
 }
 
+fn report_freed(what: &str, bytes: u64) {
+    if bytes > 0 {
+        println!("{what}: source files deleted, {} freed", import::fetch::human_size(bytes));
+    } else {
+        println!("{what}: no source files to delete");
+    }
+}
+
 fn scope(config: &Config) -> String {
     if config.countries.is_empty() { "all countries".into() } else { config.countries.join(",").to_uppercase() }
 }
@@ -233,8 +260,10 @@ async fn build_places(config: &Config) -> Result<Option<(u64, String)>> {
 
 async fn import_places(config: &Config, rebuild: bool) -> Result<Option<(u64, String)>> {
     println!("GeoNames: fetching into {}", config.data_dir.display());
-    let downloaded = import::fetch_all(config).await?;
-    if downloaded == 0 && !rebuild && import::db::is_current(config).await? {
+    // A rebuild reads every source file, including any discarded earlier.
+    let must_build = rebuild || !import::db::settings_current(config).await?;
+    let downloaded = import::fetch_all(config, must_build).await?;
+    if downloaded == 0 && !must_build && import::db::is_current(config).await? {
         println!("Places already up to date (--rebuild to reload anyway)");
         return Ok(None);
     }
@@ -293,9 +322,15 @@ async fn main() -> Result<()> {
             // Time zones first: quick, and independent of the place tables.
             if wants(only, DataSet::Timezones) {
                 logged(&config, "timezonedb", import_time_zones(&config, build.rebuild)).await?;
+                if build.discard_sources {
+                    report_freed("TimeZoneDB", timezonedb::discard_source(&config)?);
+                }
             }
             if wants(only, DataSet::Geonames) {
                 logged(&config, "geonames", import_places(&config, build.rebuild)).await?;
+                if build.discard_sources {
+                    report_freed("GeoNames", import::discard_sources(&config)?);
+                }
             }
             Ok(())
         }
@@ -325,11 +360,15 @@ async fn main() -> Result<()> {
         Command::Fetch { fetch } => {
             let config = config(paths, fetch, &BuildArgs::default())?;
             println!("GeoNames: fetching into {}", config.data_dir.display());
-            import::fetch_all(&config).await.map(|_| ())
+            import::fetch_all(&config, true).await.map(|_| ())
         }
         Command::Build { fetch, build } => {
             let config = config(paths, fetch, &build)?;
-            logged(&config, "geonames", build_places(&config)).await
+            logged(&config, "geonames", build_places(&config)).await?;
+            if build.discard_sources {
+                report_freed("GeoNames", import::discard_sources(&config)?);
+            }
+            Ok(())
         }
     }
 }

@@ -100,10 +100,12 @@ TimeZoneDB data is downloaded and loaded only by `import` (with no `--only`, or 
 | `--countries GB,IE` | all | Places only: use per-country files, not `allCountries`. Handy for quick tests. |
 | `--force` | `import`, `fetch` | Download everything again. |
 | `--offline` | all | Never contact the servers. |
+| `--no-space-check` | `import`, `fetch`, `build` | Skip the free-disk-space check. |
 | `--fcodes <FILE>` | `import`, `build` | Place feature codes to keep, whitespace-separated, `#` for comments. |
 | `--languages <FILE>` | `import`, `build` | Languages that supply search names; see [Search names](#search-names). |
 | `--keep-unpopulated` | `import`, `build` | Keep `P*` codes with no population too (about 5 million more rows). |
 | `--rebuild` | `import` | Reload the tables even when nothing changed. |
+| `--discard-sources` | `import`, `build` | Delete the downloaded source files once imported; see [Freeing disk space](#freeing-disk-space). |
 | `--max-drop <PERCENT>` | `import`, `build` | Abort if a table's row count falls by more than this since the last import. Default 10; 100 disables. |
 
 ### GeoNames files downloaded
@@ -202,6 +204,40 @@ How updates are detected: the TimeZoneDB server sends no ETag or Last-Modified h
 ## Schema changes
 
 The schema version is kept in SQLite's `user_version`. When a release changes a table's name or columns, the affected tables are dropped on first use and the next `import` refills them, so run `import` after upgrading.
+
+## Disk space
+
+Before downloading anything, `import` works out how much space the run needs and stops if the disk has less, so a server never ends up with a half-finished download filling it:
+
+```
+disk space needed: about 3.9 GiB (2.8 GiB while downloading and unpacking, 862.9 MiB while loading the database)
+```
+
+The figure is calculated for each run, not fixed:
+
+- From the size of each file the server reports, with archives counted at 4.5 times their size once unpacked (the real files measure 3.8 to 4.25).
+- Files are fetched one at a time, so an archive only overlaps with its own unpacked contents, and a file being replaced is only doubled while its replacement arrives. A routine update of files already present therefore needs far less than a first download.
+- Loading needs room for the database plus the same again for SQLite's write-ahead log, which holds the new data until the import commits.
+- 5% is added as a margin.
+
+A first import of all countries needs about 3.9 GiB at its peak and settles at about 3 GiB (0.4 GiB with `--discard-sources`). When nothing needs downloading there is no check. `--no-space-check` skips it.
+
+## Freeing disk space
+
+The unpacked source files take about 2.6 GB for all countries, against roughly 400 MB for the database. The service never reads them, so on a server they can go:
+
+```bash
+cargo run --release -- import --discard-sources
+```
+
+This imports as usual (or confirms everything is current) and then deletes the source files, reporting the space freed. Only the two small `manifest.json` files remain, recording which versions were imported.
+
+Afterwards:
+
+- `import` and `check` still detect updates, by comparing the manifest with the publishers' servers. While nothing has changed, nothing is downloaded.
+- When any GeoNames file changes, or a rebuild is needed for another reason (`--rebuild`, or a different feature-code or language list), all the GeoNames files are downloaded again, since a rebuild reads every one. That is about 600 MB for all countries.
+- Without `--discard-sources` on that later run, the re-downloaded files stay. Put the option in the scheduled command to keep the disk clear.
+- `--offline` and `build` need the files, and fail with a clear message if they have been discarded.
 
 ## Which rows are imported
 

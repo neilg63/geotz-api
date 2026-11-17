@@ -16,7 +16,7 @@ use reqwest::header::{ETAG, HeaderMap, LAST_MODIFIED};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use super::{Config, Source};
+use super::{Config, Source, space};
 
 const MANIFEST_FILE: &str = "manifest.json";
 const USER_AGENT: &str = concat!("geotz-import/", env!("CARGO_PKG_VERSION"));
@@ -28,12 +28,21 @@ pub struct RemoteVersion {
     pub etag: Option<String>,
     pub last_modified: Option<String>,
     pub size: Option<u64>,
+    /// The local copy was deleted on purpose after being imported
+    /// (`--discard-sources`); the database holds this version.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub discarded: bool,
 }
 
 impl RemoteVersion {
     fn from_headers(headers: &HeaderMap, size: Option<u64>) -> Self {
         let text = |name| headers.get(name).and_then(|v| v.to_str().ok()).map(str::to_owned);
-        RemoteVersion { etag: text(ETAG), last_modified: text(LAST_MODIFIED), size }
+        RemoteVersion { etag: text(ETAG), last_modified: text(LAST_MODIFIED), size, discarded: false }
+    }
+
+    /// Same published file, whatever has happened to the local copy.
+    fn same_file(&self, other: &RemoteVersion) -> bool {
+        (&self.etag, &self.last_modified, self.size) == (&other.etag, &other.last_modified, other.size)
     }
 
     fn modified_time(&self) -> Option<SystemTime> {
@@ -97,48 +106,171 @@ impl<'a> Fetcher<'a> {
     /// one, without downloading it.
     pub async fn check(&self, source: &Source) -> Result<Freshness> {
         let target = self.config.local_path(&source.local);
-        if !target.is_file() {
+        let present = target.is_file();
+        if !present && !self.was_discarded(source) {
             return Ok(Freshness::Missing);
         }
         let url = format!("{}{}", self.config.geonames_url, source.remote);
         let remote = self.head(&url).await.with_context(|| format!("cannot reach {url}"))?;
-        if self.is_current(source, &target, &remote) {
+        let current = if present {
+            self.is_current(source, &target, &remote)
+        } else {
+            self.discarded_copy_is(source, &remote)
+        };
+        if current {
             Ok(Freshness::Current)
         } else {
             Ok(Freshness::Changed(remote.last_modified))
         }
     }
 
-    /// Makes sure the local text file for `source` exists and is current.
-    /// Returns `true` when a new copy was downloaded.
-    pub async fn ensure(&self, source: &Source) -> Result<bool> {
-        let target = self.config.local_path(&source.local);
-        let present = target.is_file();
+    fn was_discarded(&self, source: &Source) -> bool {
+        self.manifest.lock().unwrap().get(&source.remote).is_some_and(|v| v.discarded)
+    }
 
+    /// True when the local copy was discarded after import and the server
+    /// still publishes that same version.
+    fn discarded_copy_is(&self, source: &Source, remote: &RemoteVersion) -> bool {
+        remote.is_known()
+            && self
+                .manifest
+                .lock()
+                .unwrap()
+                .get(&source.remote)
+                .is_some_and(|recorded| recorded.discarded && recorded.same_file(remote))
+    }
+
+    /// Makes sure the local files are current. Returns how many were
+    /// downloaded.
+    ///
+    /// Files discarded after an earlier import are left absent while nothing
+    /// has changed. As soon as any file has changed, or `need_files` says a
+    /// rebuild is coming regardless, every missing file is downloaded again,
+    /// because a rebuild reads them all.
+    pub async fn ensure_all(&self, sources: &[Source], need_files: bool) -> Result<usize> {
         if self.config.offline {
-            if !present {
-                bail!("{} is missing and --offline was given", target.display());
+            for source in sources {
+                let target = self.config.local_path(&source.local);
+                if !target.is_file() {
+                    bail!("{} is missing and --offline was given", target.display());
+                }
+                println!("  kept  {} (offline)", source.local);
             }
-            println!("  kept  {} (offline)", source.local);
-            return Ok(false);
+            return Ok(0);
         }
 
-        let url = format!("{}{}", self.config.geonames_url, source.remote);
-        let remote = match self.head(&url).await {
-            Ok(version) => version,
-            Err(e) if present => {
-                println!("  kept  {} (cannot check for updates: {e})", source.local);
-                return Ok(false);
+        // What the server has now; `None` when it cannot be reached.
+        let mut remotes = Vec::with_capacity(sources.len());
+        for source in sources {
+            let url = format!("{}{}", self.config.geonames_url, source.remote);
+            remotes.push(self.head(&url).await);
+        }
+
+        #[derive(PartialEq)]
+        enum State {
+            Current,
+            DiscardedCurrent,
+            Unverified,
+            Stale,
+        }
+        let states: Vec<State> = sources
+            .iter()
+            .zip(&remotes)
+            .map(|(source, remote)| {
+                let target = self.config.local_path(&source.local);
+                let present = target.is_file();
+                match remote {
+                    Err(_) if present => State::Unverified,
+                    Err(_) if self.was_discarded(source) => State::DiscardedCurrent,
+                    Err(_) => State::Stale,
+                    Ok(_) if self.config.force => State::Stale,
+                    Ok(remote) if present && self.is_current(source, &target, remote) => State::Current,
+                    Ok(remote) if !present && self.discarded_copy_is(source, remote) => State::DiscardedCurrent,
+                    Ok(_) => State::Stale,
+                }
+            })
+            .collect();
+        let need_files = need_files || states.contains(&State::Stale);
+
+        if !self.config.skip_space_check {
+            self.require_space(sources, &remotes, |i| match states[i] {
+                State::Current | State::Unverified => false,
+                State::DiscardedCurrent => need_files,
+                State::Stale => true,
+            })?;
+        }
+
+        let mut downloaded = 0;
+        for ((source, remote), state) in sources.iter().zip(remotes).zip(states) {
+            match (state, remote) {
+                (State::Current, Ok(remote)) => {
+                    println!("  kept  {} (unchanged)", source.local);
+                    self.record(source, remote);
+                }
+                (State::Unverified, Err(e)) => {
+                    println!("  kept  {} (cannot check for updates: {e})", source.local);
+                }
+                (State::DiscardedCurrent, _) if !need_files => {
+                    println!("  kept  {} (unchanged; local copy discarded after import)", source.local);
+                }
+                (_, Ok(remote)) => {
+                    self.fetch(source, remote).await?;
+                    downloaded += 1;
+                }
+                (_, Err(e)) => {
+                    let url = format!("{}{}", self.config.geonames_url, source.remote);
+                    return Err(e).with_context(|| format!("cannot reach {url}"));
+                }
             }
-            Err(e) => return Err(e).with_context(|| format!("cannot reach {url}")),
+        }
+        Ok(downloaded)
+    }
+
+    /// Checks there is room for the downloads about to happen and for
+    /// loading them into the database afterwards.
+    fn require_space(
+        &self,
+        sources: &[Source],
+        remotes: &[Result<RemoteVersion>],
+        will_download: impl Fn(usize) -> bool,
+    ) -> Result<()> {
+        let local_size = |source: &Source| {
+            fs::metadata(self.config.local_path(&source.local)).map(|m| m.len()).unwrap_or(0)
         };
-
-        if present && !self.config.force && self.is_current(source, &target, &remote) {
-            println!("  kept  {} (unchanged)", source.local);
-            self.record(source, remote);
-            return Ok(false);
+        let mut downloads = Vec::new();
+        let mut source_bytes = 0;
+        for (i, source) in sources.iter().enumerate() {
+            if !will_download(i) {
+                source_bytes += local_size(source);
+                continue;
+            }
+            let download = space::Download {
+                remote_size: remotes[i].as_ref().ok().and_then(|r| r.size),
+                is_zip: source.is_zip(),
+                existing: local_size(source),
+            };
+            source_bytes += download.unpacked();
+            downloads.push(download);
         }
+        if downloads.is_empty() {
+            return Ok(());
+        }
+        let fetching = space::download_peak(&downloads);
+        let database = fs::metadata(&self.config.db_path).map(|m| m.len()).unwrap_or(0);
+        let loading = space::load_allowance(source_bytes, database);
+        let parts = format!(
+            "{} while downloading and unpacking, {} while loading the database",
+            human_size(fetching),
+            human_size(loading)
+        );
+        println!("  disk space needed: about {} ({parts})", human_size(space::with_margin(fetching + loading)));
+        space::require(&self.config.data_dir, fetching + loading, &parts)
+    }
 
+    /// Downloads one file, unpacking it if it is an archive.
+    async fn fetch(&self, source: &Source, remote: RemoteVersion) -> Result<()> {
+        let target = self.config.local_path(&source.local);
+        let url = format!("{}{}", self.config.geonames_url, source.remote);
         let download = self.config.local_path(&format!("{}.part", source.remote.replace('/', "_")));
         let fetched = self.download(&url, &download).await?;
         if source.is_zip() {
@@ -153,8 +285,25 @@ impl<'a> Fetcher<'a> {
         println!("  fetch {} ({})", source.local, human_size(fetched));
         self.record(source, remote);
         // Saved after each file so an interrupted run does not repeat finished downloads.
+        self.save_manifest()
+    }
+
+    /// Deletes the local copies of `sources` and notes in the manifest that
+    /// this was deliberate. Returns the bytes freed.
+    pub fn discard(&self, sources: &[Source]) -> Result<u64> {
+        let mut freed = 0;
+        for source in sources {
+            let target = self.config.local_path(&source.local);
+            // symlink_metadata: remove a link, not what it points at.
+            let Ok(info) = fs::symlink_metadata(&target) else { continue };
+            fs::remove_file(&target).with_context(|| format!("cannot delete {}", target.display()))?;
+            freed += info.len();
+            if let Some(recorded) = self.manifest.lock().unwrap().get_mut(&source.remote) {
+                recorded.discarded = true;
+            }
+        }
         self.save_manifest()?;
-        Ok(true)
+        Ok(freed)
     }
 
     fn record(&self, source: &Source, version: RemoteVersion) {
@@ -166,7 +315,7 @@ impl<'a> Fetcher<'a> {
             return false;
         }
         if let Some(recorded) = self.manifest.lock().unwrap().get(&source.remote) {
-            return recorded == remote;
+            return recorded.same_file(remote);
         }
         // No record (e.g. files unpacked by hand): trust a local copy that is
         // newer than the server's.
@@ -241,7 +390,7 @@ fn unzip_member(zip_path: &Path, member: &str, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn human_size(bytes: u64) -> String {
+pub fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
     let mut value = bytes as f64;
     let mut unit = 0;

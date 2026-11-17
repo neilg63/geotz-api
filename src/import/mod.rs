@@ -8,6 +8,7 @@ pub mod db;
 pub mod fetch;
 pub mod geonames;
 pub mod names;
+pub mod space;
 pub mod timezonedb;
 
 use std::collections::HashSet;
@@ -100,6 +101,8 @@ pub struct Config {
     pub keep_unpopulated: bool,
     pub force: bool,
     pub offline: bool,
+    /// Skip the free-disk-space checks before downloading and loading.
+    pub skip_space_check: bool,
     /// Abort when the place count falls by more than this percentage
     /// compared with the previous import made with the same settings.
     pub max_drop_percent: f64,
@@ -166,14 +169,20 @@ pub fn load_fcodes(path: &Path) -> Result<HashSet<String>> {
 
 /// Downloads and unpacks everything the build stage needs.
 /// Returns how many files were newly downloaded.
-pub async fn fetch_all(config: &Config) -> Result<usize> {
+///
+/// `need_files` forces files discarded after an earlier import to be
+/// downloaded again even if nothing has changed, for a rebuild.
+pub async fn fetch_all(config: &Config, need_files: bool) -> Result<usize> {
     let fetcher = fetch::Fetcher::new(config)?;
-    let mut downloaded = 0;
-    for source in &config.all_sources() {
-        downloaded += fetcher.ensure(source).await? as usize;
-    }
+    let downloaded = fetcher.ensure_all(&config.all_sources(), need_files).await?;
     fetcher.save_manifest()?;
     Ok(downloaded)
+}
+
+/// Deletes the unpacked GeoNames files to free disk space. They are
+/// downloaded again the next time an import needs them. Returns bytes freed.
+pub fn discard_sources(config: &Config) -> Result<u64> {
+    fetch::Fetcher::new(config)?.discard(&config.all_sources())
 }
 
 /// Compares every source file with the server without downloading anything.

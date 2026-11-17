@@ -143,6 +143,17 @@ pub async fn build(config: &Config) -> Result<Stats> {
     // Recorded as the import time: any source file modified after this
     // moment may not have been read.
     let started_at = unix_now();
+    if !config.skip_space_check {
+        let source_bytes: u64 = config
+            .all_sources()
+            .iter()
+            .filter_map(|source| fs::metadata(config.local_path(&source.local)).ok())
+            .map(|info| info.len())
+            .sum();
+        let database = fs::metadata(&config.db_path).map(|m| m.len()).unwrap_or(0);
+        let needed = super::space::load_allowance(source_bytes, database);
+        super::space::require(&config.db_path, needed, "while loading the database")?;
+    }
     let mut conn = open(&config.db_path).await?;
     let mut tx = conn.begin().await?;
     let mut stats = Stats::default();
@@ -287,6 +298,18 @@ pub fn shrinks_too_much(previous: u64, new: u64, max_drop_percent: f64) -> bool 
     drop_percent(previous, new) > max_drop_percent
 }
 
+/// True when the database holds places imported with these settings.
+pub async fn settings_current(config: &Config) -> Result<bool> {
+    if !config.db_path.is_file() {
+        return Ok(false);
+    }
+    let mut conn = open(&config.db_path).await?;
+    let same = settings_match(config, &mut conn).await?;
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM toponyms").fetch_one(&mut conn).await?;
+    conn.close().await?;
+    Ok(same && rows > 0)
+}
+
 /// True when the database already holds an import made with these settings
 /// from the source files as they are now, so a rebuild would change nothing.
 pub async fn is_current(config: &Config) -> Result<bool> {
@@ -307,7 +330,9 @@ pub async fn is_current(config: &Config) -> Result<bool> {
     // been loaded yet.
     let mut newest_source = 0;
     for source in &config.all_sources() {
-        let modified = fs::metadata(config.local_path(&source.local))?.modified()?;
+        // A file discarded after import cannot be newer than that import.
+        let Ok(info) = fs::metadata(config.local_path(&source.local)) else { continue };
+        let modified = info.modified()?;
         let secs = modified.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         newest_source = newest_source.max(secs);
     }
