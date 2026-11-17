@@ -5,6 +5,12 @@ edition = "2024"
 authors = ["Neil Gardner"]
 license = "MIT OR Apache-2.0"
 description = "Place and time-zone lookup service backed by SQLite, with importers for GeoNames and TimeZoneDB data"
+repository = "https://github.com/neilg63/geotz-api"
+homepage = "https://github.com/neilg63/geotz-api"
+documentation = "https://docs.rs/geotz-api"
+readme = "README.md"
+keywords = ["timezone", "geonames", "geocoding", "sqlite", "axum"]
+categories = ["date-and-time", "web-programming::http-server", "command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.104"

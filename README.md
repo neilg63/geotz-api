@@ -1,5 +1,9 @@
 # geotz-api
 
+[![mirror](https://img.shields.io/badge/mirror-github-blue)](https://github.com/neilg63/geotz-api)
+[![crates.io](https://img.shields.io/crates/v/geotz-api.svg)](https://crates.io/crates/geotz-api)
+[![docs.rs](https://docs.rs/geotz-api/badge.svg)](https://docs.rs/geotz-api)
+
 Rust rewrite of the GeoTimeZone backend: axum, sqlx and SQLite. One binary, `geotz-api`, holds both the web service and the data tools.
 
 ## Running the service
