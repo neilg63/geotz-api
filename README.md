@@ -10,7 +10,9 @@ Import the data first (next section), then:
 cargo run --release -- serve
 ```
 
-It listens on `127.0.0.1:8089` by default; change that with `--host` and `--port` (see [Settings](#settings)). The database is opened read-only, and an `import` can run while the service is up.
+It listens on `127.0.0.1:8089` by default; change that with `--host` and `--port` (see [Settings](#settings)).
+
+JSON keys are snake_case (`zone_name`). For clients written against the old service, `serve --camel-case`, or `CAMEL_CASE=true` (or `1`) in the environment or `.env`, switches every key to camelCase (`zoneName`). The database is opened read-only, and an `import` can run while the service is up.
 
 The endpoints are documented in [docs/API.md](docs/API.md). The behaviour of the service being replaced is documented in `../geotz/docs/API.md`.
 
@@ -27,7 +29,8 @@ Each setting is taken from the first of these that provides it: the command-line
 | `GEOTZ_DATA_DIR` | `--data-dir` | `<DATA_PATH>/geonames` |
 | `GEOTZ_TZ_DIR` | `--tz-dir` | `<DATA_PATH>/timezonedb` |
 | `GEOTZ_HOST` | `serve --host` | `127.0.0.1` |
-| `GEOTZ_PORT` | `serve --port` | `8089` |
+| `PORT` | `serve --port` | `8089` |
+| `CAMEL_CASE` | `serve --camel-case` | off |
 
 The two download URLs are base addresses; file names are appended, so a mirror must keep the publishers' file names and layout.
 
@@ -64,7 +67,7 @@ To see whether an update is available without changing anything:
 cargo run --release -- check
 ```
 
-`check` exits with status 1 when a file is missing or has changed on the server, so a scheduled job can test it. It also records its finding in the database, which the service reports at `/` as `updateAvailable`. No scraping is involved: for GeoNames it sends an HTTP `HEAD` request per file and reads the `Last-Modified` date; for TimeZoneDB, whose server sends no such date, it reads the date and checksum inside the zip.
+`check` exits with status 1 when a file is missing or has changed on the server, so a scheduled job can test it. It also records its finding in the database, which the service reports at `/` as `update_available`. No scraping is involved: for GeoNames it sends an HTTP `HEAD` request per file and reads the `Last-Modified` date; for TimeZoneDB, whose server sends no such date, it reads the date and checksum inside the zip.
 
 A daily cron entry is enough to keep the data current:
 

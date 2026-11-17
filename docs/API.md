@@ -8,7 +8,7 @@ cargo run --release -- serve --port 8089
 
 ## Conventions
 
-- Every endpoint is `GET` and returns JSON with camelCase keys.
+- Every endpoint is `GET` and returns JSON with snake_case keys such as `zone_name` and `gmt_offset`. Starting the service with `--camel-case` (or `CAMEL_CASE=true`) switches every key to camelCase (`zoneName`, `gmtOffset`), as the old service used; values are never altered.
 - Errors use one shape, `{"valid": false, "error": "..."}`, with a matching status:
 
 | Status | When |
@@ -46,28 +46,28 @@ Reports the state of the data. `ready` is true when both data sets are loaded.
     "geonames": {
       "provides": "places, search names and their time-zone names",
       "imported": true,
-      "importedAt": "2026-11-17T17:09:53Z",
-      "records": { "places": 1192184, "searchNames": 1608492 },
+      "imported_at": "2026-11-17T17:09:53Z",
+      "records": { "places": 1192184, "search_names": 1608492 },
       "release": "2026-11-17",
       "scope": "allCountries",
-      "checkedAt": "2026-11-17T17:09:53Z",
-      "updateAvailable": false
+      "checked_at": "2026-11-17T17:09:53Z",
+      "update_available": false
     },
     "timezonedb": {
       "provides": "time-zone offset history and country names",
       "imported": true,
-      "importedAt": "2026-11-17T17:10:45Z",
-      "records": { "offsetPeriods": 141634, "zones": 419, "countries": 249 },
+      "imported_at": "2026-11-17T17:10:45Z",
+      "records": { "offset_periods": 141634, "zones": 419, "countries": 249 },
       "release": "2026-11-03",
-      "checkedAt": "2026-11-17T17:10:45Z",
-      "updateAvailable": false
+      "checked_at": "2026-11-17T17:10:45Z",
+      "update_available": false
     }
   },
-  "recentImports": [
+  "recent_imports": [
     {
-      "dataSet": "geonames",
-      "startedAt": "2026-11-17T17:08:30Z",
-      "finishedAt": "2026-11-17T17:10:43Z",
+      "data_set": "geonames",
+      "started_at": "2026-11-17T17:08:30Z",
+      "finished_at": "2026-11-17T17:10:43Z",
       "status": "imported",
       "records": 1192184,
       "detail": "all countries"
@@ -79,11 +79,11 @@ Reports the state of the data. `ready` is true when both data sets are loaded.
 | Field | Meaning |
 | --- | --- |
 | `imported` | Whether the data set's tables hold any rows |
-| `importedAt` | When the current data was loaded (UTC) |
+| `imported_at` | When the current data was loaded (UTC) |
 | `records` | Row counts by table, as of that import |
 | `release` | Date the publisher last modified the imported files |
-| `checkedAt`, `updateAvailable` | When `geotz-api check` (or an import) last compared with the publisher, and whether newer files existed |
-| `recentImports` | The last ten import attempts, newest first; `status` is `imported`, `unchanged` or `failed`, and `detail` holds the error for a failure |
+| `checked_at`, `update_available` | When `geotz-api check` (or an import) last compared with the publisher, and whether newer files existed |
+| `recent_imports` | The last ten import attempts, newest first; `status` is `imported`, `unchanged` or `failed`, and `detail` holds the error for a failure |
 
 A data set that has never been imported shows only `provides` and `"imported": false`.
 
@@ -136,16 +136,16 @@ Returned by `/timezone` and as `time` in `/geotz` and `/geotime`.
 
 | Field | Meaning |
 | --- | --- |
-| `zoneName` | IANA name, or a sea-area name such as `North_Atlantic/03W` |
-| `countryCode` | ISO code of the zone's country; empty at sea |
+| `zone_name` | IANA name, or a sea-area name such as `North_Atlantic/03W` |
+| `country_code` | ISO code of the zone's country; empty at sea |
 | `abbreviation` | e.g. `CDT`; `SOL` or `LOC` when derived from longitude |
-| `gmtOffset` | Seconds east of UTC at the reference time |
+| `gmt_offset` | Seconds east of UTC at the reference time |
 | `dst` | Whether summer time is in force |
-| `utc`, `localDt` | The reference time in UTC and on local clocks |
-| `refUnix`, `refJd` | The reference time as Unix seconds and Julian day |
-| `weekDay` | Local weekday: `iso` (Mon=1…Sun=7), `sun` (Sun=1…Sat=7), `abbr` |
-| `period` | `start`/`startUtc` and `end`/`endUtc` of the current offset, and `nextGmtOffset`; empty when derived from longitude |
-| `solarUtcOffset` | Longitude × 240 seconds; present when a position is known |
+| `utc`, `local_dt` | The reference time in UTC and on local clocks |
+| `ref_unix`, `ref_jd` | The reference time as Unix seconds and Julian day |
+| `week_day` | Local weekday: `iso` (Mon=1…Sun=7), `sun` (Sun=1…Sat=7), `abbr` |
+| `period` | `start`/`start_utc` and `end`/`end_utc` of the current offset, and `next_utc_offset`; empty when derived from longitude |
+| `solar_utc_offset` | Longitude × 240 seconds; present when a position is known |
 
 Dates before a zone's first record:
 
@@ -160,24 +160,24 @@ GET /timezone?loc=43,-94&dtl=2010-03-14T03:00:00
 
 ```json
 {
-  "zoneName": "America/Chicago",
-  "countryCode": "US",
+  "zone_name": "America/Chicago",
+  "country_code": "US",
   "abbreviation": "CDT",
-  "gmtOffset": -18000,
+  "gmt_offset": -18000,
   "dst": true,
-  "localDt": "2010-03-14T03:00:00",
+  "local_dt": "2010-03-14T03:00:00",
   "utc": "2010-03-14T08:00:00",
   "period": {
     "start": 1268553600,
-    "startUtc": "2010-03-14T08:00:00",
-    "nextGmtOffset": -21600,
+    "start_utc": "2010-03-14T08:00:00",
+    "next_utc_offset": -21600,
     "end": 1289113200,
-    "endUtc": "2010-11-07T07:00:00"
+    "end_utc": "2010-11-07T07:00:00"
   },
-  "weekDay": { "iso": 7, "sun": 1, "abbr": "Sun" },
-  "refUnix": 1268553600,
-  "refJd": 2455269.8333333335,
-  "solarUtcOffset": -22560
+  "week_day": { "iso": 7, "sun": 1, "abbr": "Sun" },
+  "ref_unix": 1268553600,
+  "ref_jd": 2455269.8333333335,
+  "solar_utc_offset": -22560
 }
 ```
 
@@ -193,9 +193,9 @@ Same parameters. Returns `{"place": ..., "time": ...}`; `place` is omitted at se
 | `lat`, `lng` | Its coordinates |
 | `distance` | km from the requested position; 0 when found by name |
 | `fcode`, `pop` | GeoNames feature code and population |
-| `adminName`, `region` | Second- and first-level division names; empty if unknown |
-| `cc`, `countryName` | ISO country code and name |
-| `zoneName` | Zone name |
+| `admin_name`, `region` | Second- and first-level division names; empty if unknown |
+| `cc`, `country_name` | ISO country code and name |
+| `zone_name` | Zone name |
 
 ## GET /geotime
 
@@ -254,7 +254,7 @@ Populated places only.
 
 ```json
 [
-  { "id": 2867714, "lat": 48.13743, "lng": 11.57549, "text": "Munich, Bavaria (DE)", "zoneName": "Europe/Berlin" }
+  { "id": 2867714, "lat": 48.13743, "lng": 11.57549, "text": "Munich, Bavaria (DE)", "zone_name": "Europe/Berlin" }
 ]
 ```
 
@@ -265,9 +265,9 @@ Populated places only. `matched` appears when the query matched an alternate nam
 ```json
 [
   {
-    "id": 1275339, "name": "Mumbai", "asciiName": "Mumbai", "matched": "Bombay",
-    "adminName": "State of Mahārāshtra", "cc": "IN",
-    "lat": 19.07283, "lng": 72.88261, "population": 12691836, "zoneName": "Asia/Kolkata"
+    "id": 1275339, "name": "Mumbai", "ascii_name": "Mumbai", "matched": "Bombay",
+    "admin_name": "State of Mahārāshtra", "cc": "IN",
+    "lat": 19.07283, "lng": 72.88261, "population": 12691836, "zone_name": "Asia/Kolkata"
   }
 ]
 ```
@@ -281,7 +281,7 @@ Populated places and administrative divisions.
   "count": 1,
   "message": "OK",
   "results": [
-    { "lat": 55.95206, "lng": -3.19648, "name": "Edinburgh", "toponym": "Edinburgh", "fcode": "PPLA", "pop": 514990, "countryCode": "GB", "adminName": "Scotland" }
+    { "lat": 55.95206, "lng": -3.19648, "name": "Edinburgh", "toponym": "Edinburgh", "fcode": "PPLA", "pop": 514990, "country_code": "GB", "admin_name": "Scotland" }
   ]
 }
 ```
@@ -302,7 +302,8 @@ Populated places and administrative divisions.
 | `/lookup` `fuzzy` | Any value returned nothing | Not used; there is no fuzzy matching |
 | `/search` | GeoNames web search | Local search; `fuzzy`, `included` and `mode` are ignored |
 | Open sea | Named from GeoNames (e.g. `Canarias_Sea/03W`), differing by endpoint | One coarse local naming (`North_Atlantic/03W`) on every endpoint |
-| `LOC`/`SOL` results | No `utc`, `localDt`, weekday or reference time | All fields present |
+| `LOC`/`SOL` results | No `utc`, `local_dt`, weekday or reference time | All fields present |
 | Dates before a zone's records, `zn` only | "Cannot identify a time zone" | The zone's local mean time |
 | Place text | `Name, District (UK)` | `Name, Region (GB)` |
+| JSON keys | camelCase | snake_case by default; camelCase with `--camel-case` |
 | New fields | – | `id` (GeoNames id) in `/lookup` and `/localities`; `matched` in `/localities` |

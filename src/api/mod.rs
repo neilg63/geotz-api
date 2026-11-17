@@ -8,7 +8,9 @@ pub mod time;
 use std::path::Path;
 
 use anyhow::Context;
-use axum::extract::{Query, State};
+use axum::body::Body;
+use axum::extract::{Query, Request, State};
+use axum::middleware::{self, Next};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -75,7 +77,56 @@ pub async fn open_pool(db_path: &Path) -> anyhow::Result<SqlitePool> {
         .with_context(|| format!("cannot open {}", db_path.display()))
 }
 
-pub fn router(pool: SqlitePool) -> Router {
+/// `zone_name` -> `zoneName`.
+fn camel_key(key: &str) -> String {
+    let mut out = String::with_capacity(key.len());
+    let mut upper_next = false;
+    for c in key.chars() {
+        if c == '_' && !out.is_empty() {
+            upper_next = true;
+        } else if upper_next {
+            out.extend(c.to_uppercase());
+            upper_next = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Renames every object key in a JSON value to camelCase.
+fn camel_case(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            Value::Object(map.into_iter().map(|(key, value)| (camel_key(&key), camel_case(value))).collect())
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(camel_case).collect()),
+        other => other,
+    }
+}
+
+/// Response layer for `--camel-case`: rewrites the keys of JSON bodies.
+/// Responses are snake_case as built; this runs only when the option is on.
+async fn camel_case_keys(request: Request, next: Next) -> Response {
+    let response = next.run(request).await;
+    let (parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    };
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(value) => (parts.status, Json(camel_case(value))).into_response(),
+        Err(_) => Response::from_parts(parts, Body::from(bytes)),
+    }
+}
+
+/// Builds the routes. Keys in responses are snake_case unless
+/// `camel_case_output` is set.
+pub fn router(pool: SqlitePool, camel_case_output: bool) -> Router {
+    let routes = routes(pool);
+    if camel_case_output { routes.layer(middleware::from_fn(camel_case_keys)) } else { routes }
+}
+
+fn routes(pool: SqlitePool) -> Router {
     Router::new()
         .route("/", get(welcome))
         .route("/timezone", get(timezone))
@@ -89,12 +140,12 @@ pub fn router(pool: SqlitePool) -> Router {
         .with_state(pool)
 }
 
-pub async fn serve(pool: SqlitePool, host: &str, port: u16) -> anyhow::Result<()> {
+pub async fn serve(pool: SqlitePool, host: &str, port: u16, camel_case_output: bool) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind((host, port))
         .await
         .with_context(|| format!("cannot listen on {host}:{port}"))?;
     println!("Listening on http://{}", listener.local_addr()?);
-    axum::serve(listener, router(pool))
+    axum::serve(listener, router(pool, camel_case_output))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
@@ -106,7 +157,6 @@ pub async fn serve(pool: SqlitePool, host: &str, port: u16) -> anyhow::Result<()
 
 /// One level of a place hierarchy, as returned by `/geotime` and `/search`.
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct PlaceRow {
     lat: f64,
     lng: f64,
@@ -152,7 +202,6 @@ impl PlaceRow {
 
 /// A single place with its context, as returned by `/nearby` and `/geotz`.
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct NearbyPlace {
     lat: f64,
     lng: f64,
@@ -194,7 +243,6 @@ async fn nearby_place(pool: &SqlitePool, place: &Place, distance: f64) -> Result
 
 /// Autocomplete entry, as returned by `/lookup`.
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct LookupItem {
     id: i64,
     lat: f64,
@@ -206,7 +254,6 @@ struct LookupItem {
 
 /// Fuller entry, as returned by `/localities`.
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct Locality {
     id: i64,
     name: String,
@@ -407,4 +454,36 @@ async fn search(State(pool): State<SqlitePool>, Query(params): Query<Params>) ->
         .collect();
     let message = if searchable { "OK" } else { "Enter a place name of 2 or more letters via ?q=NAME" };
     Ok(Json(json!({ "count": results.len(), "message": message, "results": results })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_convert_to_camel_case_at_every_level() {
+        assert_eq!(camel_key("zone_name"), "zoneName");
+        assert_eq!(camel_key("next_utc_offset"), "nextUtcOffset");
+        assert_eq!(camel_key("utc"), "utc");
+        assert_eq!(camel_key("ref_jd"), "refJd");
+        let snake = json!({
+            "zone_name": "Europe/London",
+            "period": { "start_utc": "2022-03-27T01:00:00", "next_utc_offset": 0 },
+            "recent_imports": [{ "data_set": "geonames" }],
+            "valid": false
+        });
+        let camel = json!({
+            "zoneName": "Europe/London",
+            "period": { "startUtc": "2022-03-27T01:00:00", "nextUtcOffset": 0 },
+            "recentImports": [{ "dataSet": "geonames" }],
+            "valid": false
+        });
+        assert_eq!(camel_case(snake), camel);
+    }
+
+    #[test]
+    fn values_are_never_renamed() {
+        let value = json!({ "zone_name": "America/Port_of_Spain", "text": "a_b" });
+        assert_eq!(camel_case(value), json!({ "zoneName": "America/Port_of_Spain", "text": "a_b" }));
+    }
 }

@@ -11,7 +11,6 @@ use super::ApiError;
 use super::time::format_datetime;
 
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Status {
     message: &'static str,
     version: &'static str,
@@ -29,7 +28,6 @@ struct Sources {
 }
 
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct Source {
     /// What the data set provides.
     provides: &'static str,
@@ -54,7 +52,6 @@ struct Source {
 }
 
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct LogEntry {
     data_set: String,
     started_at: String,
@@ -125,7 +122,7 @@ pub async fn status(pool: &SqlitePool) -> Result<Status, ApiError> {
         imported: places_loaded,
         imported_at: meta.time("geonames_imported_at").filter(|_| places_loaded),
         records: meta
-            .records(&[("places", "toponyms_rows"), ("searchNames", "place_names_rows")])
+            .records(&[("places", "toponyms_rows"), ("search_names", "place_names_rows")])
             .filter(|_| places_loaded),
         release: meta.text("geonames_release").filter(|_| places_loaded),
         scope: meta.text("geonames_scope").filter(|_| places_loaded),
@@ -138,7 +135,7 @@ pub async fn status(pool: &SqlitePool) -> Result<Status, ApiError> {
         imported_at: meta.time("timezonedb_imported_at").filter(|_| zones_loaded),
         records: meta
             .records(&[
-                ("offsetPeriods", "time_zones_rows"),
+                ("offset_periods", "time_zones_rows"),
                 ("zones", "time_zones_zones"),
                 ("countries", "countries_rows"),
             ])

@@ -146,14 +146,13 @@ pub fn nautical_offset(lng: f64) -> i64 {
 }
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct Period {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_utc: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_gmt_offset: Option<i64>,
+    pub next_utc_offset: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -162,7 +161,6 @@ pub struct Period {
 
 /// The time-zone answer returned by `/timezone`, `/geotz` and `/geotime`.
 #[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
 pub struct TimeZone {
     pub zone_name: String,
     pub country_code: String,
@@ -352,7 +350,7 @@ pub async fn zone_time(
     zone_time.period = Period {
         start: Some(current.start),
         start_utc: Some(format_datetime(current.start)),
-        next_gmt_offset: next.as_ref().map(|n| n.offset),
+        next_utc_offset: next.as_ref().map(|n| n.offset),
         end: next.as_ref().map(|n| n.start),
         end_utc: next.as_ref().map(|n| format_datetime(n.start)),
     };

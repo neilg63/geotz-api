@@ -57,8 +57,14 @@ enum Command {
         #[arg(long, default_value = "127.0.0.1", env = "GEOTZ_HOST")]
         host: String,
         /// Port to listen on
-        #[arg(long, default_value_t = 8089, env = "GEOTZ_PORT")]
+        #[arg(long, default_value_t = 8089, env = "PORT")]
         port: u16,
+        /// Use camelCase keys in JSON responses, as the original service
+        /// did. The default is snake_case.
+        #[arg(long = "camel-case", alias = "camel_case", env = "CAMEL_CASE",
+              action = clap::ArgAction::SetTrue,
+              value_parser = clap::builder::FalseyValueParser::new())]
+        camel_case: bool,
     },
     /// Download changed GeoNames and TimeZoneDB files, then reload the
     /// tables they feed.
@@ -313,9 +319,9 @@ async fn main() -> Result<()> {
         timezonedb_url: cli.timezonedb_url,
     };
     match cli.command {
-        Command::Serve { host, port } => {
+        Command::Serve { host, port, camel_case } => {
             let pool = geotz_api::api::open_pool(&paths.db).await?;
-            geotz_api::api::serve(pool, &host, port).await
+            geotz_api::api::serve(pool, &host, port, camel_case).await
         }
         Command::Import { only, fetch, build } => {
             let config = config(paths, fetch, &build)?;
