@@ -59,8 +59,7 @@ enum Command {
         /// Port to listen on
         #[arg(long, default_value_t = 8089, env = "PORT")]
         port: u16,
-        /// Use camelCase keys in JSON responses, as the original service
-        /// did. The default is snake_case.
+        /// Use camelCase keys in JSON responses. The default is snake_case.
         #[arg(long = "camel-case", alias = "camel_case", env = "CAMEL_CASE",
               action = clap::ArgAction::SetTrue,
               value_parser = clap::builder::FalseyValueParser::new())]

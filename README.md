@@ -4,7 +4,9 @@
 [![crates.io](https://img.shields.io/crates/v/geotz-api.svg)](https://crates.io/crates/geotz-api)
 [![docs.rs](https://docs.rs/geotz-api/badge.svg)](https://docs.rs/geotz-api)
 
-Rust rewrite of the GeoTimeZone backend: axum, sqlx and SQLite. One binary, `geotz-api`, holds both the web service and the data tools.
+A web service that matches place names and coordinates to time zones, and gives the UTC offset in force at any date and time, including historical offsets and daylight-saving changes. It answers from a local SQLite database built from [GeoNames](https://www.geonames.org) and [TimeZoneDB](https://timezonedb.com) data, with no calls to remote services at run time.
+
+Built with axum and sqlx. One binary, `geotz-api`, holds both the web service and the tools that download the data and keep it current.
 
 ## Running the service
 
@@ -16,9 +18,9 @@ cargo run --release -- serve
 
 It listens on `127.0.0.1:8089` by default; change that with `--host` and `--port` (see [Settings](#settings)).
 
-JSON keys are snake_case (`zone_name`). For clients written against the old service, `serve --camel-case`, or `CAMEL_CASE=true` (or `1`) in the environment or `.env`, switches every key to camelCase (`zoneName`). The database is opened read-only, and an `import` can run while the service is up.
+JSON keys are snake_case (`zone_name`). `serve --camel-case`, or `CAMEL_CASE=true` (or `1`) in the environment or `.env`, switches every key to camelCase (`zoneName`). The database is opened read-only, and an `import` can run while the service is up.
 
-The endpoints are documented in [docs/API.md](docs/API.md). The behaviour of the service being replaced is documented in `../geotz/docs/API.md`.
+The endpoints are documented in [docs/API.md](docs/API.md).
 
 ## Settings
 
@@ -131,7 +133,7 @@ TimeZoneDB data is downloaded and loaded only by `import` (with no `--only`, or 
 
 ## Search names
 
-`place_names` holds the names a place can be found by, each with a weight. It replaces the old `alt_names` column, which listed every spelling GeoNames knows (94 for Munich) with no indication of language or importance.
+`place_names` holds the names a place can be found by, each with a weight. GeoNames lists every spelling it knows for a place (94 for Munich) with no indication of importance; only a curated subset is kept.
 
 Names come from GeoNames' language-tagged `alternateNamesV2.txt`. A name is kept only when it is in Latin script and its language is one of:
 
@@ -182,17 +184,17 @@ Known limits:
 
 ## Time zone history
 
-`import --only timezones` loads the two tables from TimeZoneDB's MySQL dump, parsed directly in Rust; no MySQL is involved.
+`import --only timezones` loads two tables from the SQL dump TimeZoneDB publishes. The dump is parsed directly; no MySQL server is involved.
 
 | Table | Rows | Contents |
 | --- | --- | --- |
 | `time_zones` | about 141,600 | One row per offset change per zone: `zone_name`, `country_code`, `abbreviation`, `time_start` (Unix seconds), `gmt_offset` (seconds), `dst` (0 or 1) |
 | `countries` | 249 | `country_code`, `country_name` |
 
-Differences from the MariaDB tables:
+Differences from TimeZoneDB's own layout:
 
-- The tables have plural names: TimeZoneDB's `time_zone` and `country` are stored as `time_zones` and `countries`.
-- `time_zones` has a primary key on (`zone_name`, `time_start`), which is exactly the lookup the service makes. The old table had three separate single-column indexes and no key.
+- The tables have plural names: its `time_zone` and `country` are stored as `time_zones` and `countries`.
+- `time_zones` has a primary key on (`zone_name`, `time_start`), which is exactly the lookup the service makes.
 - `dst` is an integer 0 or 1, not the character `'0'` or `'1'`.
 - `countries` is keyed by `country_code`.
 
@@ -250,16 +252,16 @@ Afterwards:
 
 A row is kept when both hold:
 
-- Its feature code is in the list ([src/import/fcodes.txt](src/import/fcodes.txt), the 75 codes found in the old MariaDB table).
+- Its feature code is in the list of 75 codes in [src/import/fcodes.txt](src/import/fcodes.txt): populated places, administrative divisions, airports and a few other kinds.
 - If the code starts with `P`, its population is greater than zero.
 
-The second rule is not in the code list itself. It reproduces the old table: without it the same 75 codes give 6.4 million rows, 4.7 million of them `PPL` with no population. `--keep-unpopulated` turns the rule off.
+The second rule keeps the database to about 1.2 million places. Without it the same 75 codes give 6.4 million rows, 4.7 million of them `PPL` entries with no population. `--keep-unpopulated` turns the rule off.
 
 ## How updates work
 
 - Every import attempt is recorded in the `import_log` table (data set, start and finish times, `imported` / `unchanged` / `failed`, row count, and the error for a failure). The service shows the last ten at `/`.
 
-- `toponyms.pl_id` is the GeoNames id, as before. The admin and country tables carry `geoname_id` too.
+- `toponyms.pl_id` is the GeoNames id, and the admin code tables carry `geoname_id` too, so rows keep their identity from one import to the next.
 - Each import empties and refills the place tables in a single transaction. The result is the same as updating by id: changed places are updated, new ones added, and places GeoNames has deleted disappear.
 - The database runs in WAL mode, so the service keeps answering from the old data until the import commits. A failed import changes nothing. No maintenance mode is needed.
 - An import that would cut the number of places, or of time-zone periods, by more than 10% is aborted and rolled back, in case a source file is truncated or broken. The comparison is only made against a previous import with the same settings; `--max-drop` changes the limit.
@@ -274,15 +276,13 @@ The second rule is not in the code list itself. It reproduces the old table: wit
 | `region` | `admin1CodesASCII.txt`, keyed by country + `adm1` | No such code in the file |
 | `admin_name` | `admin2Codes.txt`, keyed by country + `adm1` + `adm2` | `adm2` is blank, or no such code |
 
-Where the division's own feature row was imported (matched by the `geoname_id` in the code file), its name is used instead, as in the old table: "Khuzestan Province", not the code file's "Khuzestan". The code-file name is the fallback.
+Where the division's own feature row was imported (matched by the `geoname_id` in the code file), its name is used instead: "Khuzestan Province", not the code file's "Khuzestan". The code-file name is the fallback.
 
-The old table filled `admin_name` for blank `adm2` with an arbitrary district of the same region; this import leaves it NULL.
+`admin_name` is left NULL when a place has no `adm2` code, rather than guessing a district.
 
-## The `g` geometry column
+## Spatial index
 
-MariaDB stored a `POINT` in `g` with a `SPATIAL KEY`. SQLite has no geometry type, and the column is not carried over. It was redundant: it held the same two numbers as `lat` and `lng`, and the old queries filtered on `lat`/`lng` and never used the spatial index.
-
-Its replacement is an R*Tree index, `toponyms_rtree`, built by the importer from `lat` and `lng`. R*Tree is part of the SQLite that sqlx bundles; no extension is needed.
+SQLite has no geometry type, so nearest-place lookups use an R*Tree index, `toponyms_rtree`, built by the importer from each place's `lat` and `lng`. R*Tree is part of the SQLite that sqlx bundles; no extension is needed.
 
 Find candidates in a box, then compute exact distances in Rust:
 

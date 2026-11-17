@@ -1,6 +1,6 @@
 # GeoTimeZone API (geotz-api)
 
-The service answers from the local SQLite database only; it makes no calls to GeoNames or any other remote service. The API it replaces is described in `../../geotz/docs/API.md`; the [last section](#changes-from-the-old-api) lists what behaves differently.
+The service answers from the local SQLite database only; it makes no calls to GeoNames or any other remote service.
 
 ```bash
 cargo run --release -- serve --port 8089
@@ -8,7 +8,7 @@ cargo run --release -- serve --port 8089
 
 ## Conventions
 
-- Every endpoint is `GET` and returns JSON with snake_case keys such as `zone_name` and `gmt_offset`. Starting the service with `--camel-case` (or `CAMEL_CASE=true`) switches every key to camelCase (`zoneName`, `gmtOffset`), as the old service used; values are never altered.
+- Every endpoint is `GET` and returns JSON with snake_case keys such as `zone_name` and `gmt_offset`. Starting the service with `--camel-case` (or `CAMEL_CASE=true`) switches every key to camelCase (`zoneName`, `gmtOffset`); values are never altered.
 - Errors use one shape, `{"valid": false, "error": "..."}`, with a matching status:
 
 | Status | When |
@@ -216,7 +216,7 @@ Each entry also has `lat`, `lng` (those of the place) and `pop` (0 above the pla
 | --- | --- | --- |
 | `loc` | required | `lat,lng` |
 | `radius` | 100 | Search radius in km, up to 500 |
-| `fuzzy` | – | The old tolerance in degrees; used if `radius` is absent |
+| `fuzzy` | – | Tolerance in degrees; used if `radius` is absent |
 
 Returns the `place` object above for the nearest town or village, or 404 if none is in range.
 
@@ -285,25 +285,3 @@ Populated places and administrative divisions.
   ]
 }
 ```
-
-## Changes from the old API
-
-| Area | Old behaviour | Now |
-| --- | --- | --- |
-| `dtl` | Wrong around clock changes; ignored with `zn` | Resolved as [described above](#how-dtl-is-resolved) everywhere |
-| `jd`, `un`, no date | Treated as local time with `loc` | Always UTC |
-| Bad dates | Became 1970 or the current time | 400 error |
-| Missing or bad location | Silently became `0,0` | 400 error; a space after the comma is accepted |
-| Errors | Mostly status 200 | 400, 404 or 500 with one JSON shape |
-| Country codes | `UK` in place results, `GB` in time zones, `GB` only as a filter | `GB` everywhere in output; `UK` accepted as a filter |
-| Nearest place | Could be an airport, area or admin centroid; box in degrees | Nearest town or village by true distance in km; works across the date line |
-| `/nearby` | `fuzzy` in whole degrees | `radius` in km (`fuzzy` still read) |
-| `/lookup`, `/localities` | 44,700 cities; `max` returned extra rows; apostrophes broke the query | 490,000 populated places with alternate names; exact `max`; any text is safe |
-| `/lookup` `fuzzy` | Any value returned nothing | Not used; there is no fuzzy matching |
-| `/search` | GeoNames web search | Local search; `fuzzy`, `included` and `mode` are ignored |
-| Open sea | Named from GeoNames (e.g. `Canarias_Sea/03W`), differing by endpoint | One coarse local naming (`North_Atlantic/03W`) on every endpoint |
-| `LOC`/`SOL` results | No `utc`, `local_dt`, weekday or reference time | All fields present |
-| Dates before a zone's records, `zn` only | "Cannot identify a time zone" | The zone's local mean time |
-| Place text | `Name, District (UK)` | `Name, Region (GB)` |
-| JSON keys | camelCase | snake_case by default; camelCase with `--camel-case` |
-| New fields | – | `id` (GeoNames id) in `/lookup` and `/localities`; `matched` in `/localities` |
