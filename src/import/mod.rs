@@ -15,7 +15,15 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+/// Default locations of the published files. Both can be overridden, e.g.
+/// to use a mirror.
 pub const GEONAMES_DUMP_URL: &str = "https://download.geonames.org/export/dump/";
+pub const TIMEZONEDB_FILES_URL: &str = "https://timezonedb.com/files/";
+
+/// Makes a base URL safe to append a file name to.
+pub fn base_url(url: &str) -> String {
+    format!("{}/", url.trim().trim_end_matches('/'))
+}
 
 /// Feature codes present in the original MariaDB `toponyms` table.
 const DEFAULT_FCODES: &str = include_str!("fcodes.txt");
@@ -79,6 +87,10 @@ pub struct Config {
     /// Unpacked TimeZoneDB file.
     pub tz_dir: PathBuf,
     pub db_path: PathBuf,
+    /// Base URL of the GeoNames dump directory, ending in `/`.
+    pub geonames_url: String,
+    /// Base URL of the TimeZoneDB files directory, ending in `/`.
+    pub timezonedb_url: String,
     /// Empty: use `allCountries.zip`. Otherwise one `XX.zip` per code.
     pub countries: Vec<String>,
     pub fcodes: HashSet<String>,
@@ -201,6 +213,13 @@ mod tests {
     fn fcode_lists_allow_comments_and_any_whitespace() {
         let codes = parse_fcodes("ppl PPLA # capitals\n\n  adm1\t# first order\n");
         assert_eq!(codes, HashSet::from(["PPL".into(), "PPLA".into(), "ADM1".into()]));
+    }
+
+    #[test]
+    fn base_urls_end_in_one_slash() {
+        assert_eq!(base_url("https://mirror.example/dump"), "https://mirror.example/dump/");
+        assert_eq!(base_url(" https://mirror.example/dump// "), "https://mirror.example/dump/");
+        assert_eq!(base_url(GEONAMES_DUMP_URL), GEONAMES_DUMP_URL);
     }
 
     #[test]

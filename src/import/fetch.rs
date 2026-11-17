@@ -16,7 +16,7 @@ use reqwest::header::{ETAG, HeaderMap, LAST_MODIFIED};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use super::{Config, GEONAMES_DUMP_URL, Source};
+use super::{Config, Source};
 
 const MANIFEST_FILE: &str = "manifest.json";
 const USER_AGENT: &str = concat!("geotz-import/", env!("CARGO_PKG_VERSION"));
@@ -100,7 +100,7 @@ impl<'a> Fetcher<'a> {
         if !target.is_file() {
             return Ok(Freshness::Missing);
         }
-        let url = format!("{GEONAMES_DUMP_URL}{}", source.remote);
+        let url = format!("{}{}", self.config.geonames_url, source.remote);
         let remote = self.head(&url).await.with_context(|| format!("cannot reach {url}"))?;
         if self.is_current(source, &target, &remote) {
             Ok(Freshness::Current)
@@ -123,7 +123,7 @@ impl<'a> Fetcher<'a> {
             return Ok(false);
         }
 
-        let url = format!("{GEONAMES_DUMP_URL}{}", source.remote);
+        let url = format!("{}{}", self.config.geonames_url, source.remote);
         let remote = match self.head(&url).await {
             Ok(version) => version,
             Err(e) if present => {

@@ -10,9 +10,26 @@ Import the data first (next section), then:
 cargo run --release -- serve
 ```
 
-It listens on `127.0.0.1:8089` by default; change that with `--host` and `--port`, or `GEOTZ_HOST` and `GEOTZ_PORT`. The database is opened read-only, and an `import` can run while the service is up.
+It listens on `127.0.0.1:8089` by default; change that with `--host` and `--port` (see [Settings](#settings)). The database is opened read-only, and an `import` can run while the service is up.
 
 The endpoints are documented in [docs/API.md](docs/API.md). The behaviour of the service being replaced is documented in `../geotz/docs/API.md`.
+
+## Settings
+
+Each setting is taken from the first of these that provides it: the command-line option, the environment variable, a `.env` file, the default. The `.env` file is read from the directory the program is run in, or the nearest parent directory that has one. [sample.env](sample.env) lists every variable.
+
+| Variable | Option | Default |
+| --- | --- | --- |
+| `DATA_PATH` | `--data-path` | `data` |
+| `GEONAMES_BASE_DOWNLOAD_URL` | `--geonames-url` | `https://download.geonames.org/export/dump/` |
+| `TIMEZONEDB_BASE_DOWNLOAD_URL` | `--timezonedb-url` | `https://timezonedb.com/files/` |
+| `GEOTZ_DB` | `--db` | `<DATA_PATH>/geotz.db` |
+| `GEOTZ_DATA_DIR` | `--data-dir` | `<DATA_PATH>/geonames` |
+| `GEOTZ_TZ_DIR` | `--tz-dir` | `<DATA_PATH>/timezonedb` |
+| `GEOTZ_HOST` | `serve --host` | `127.0.0.1` |
+| `GEOTZ_PORT` | `serve --port` | `8089` |
+
+The two download URLs are base addresses; file names are appended, so a mirror must keep the publishers' file names and layout.
 
 ## Importing data
 
@@ -67,14 +84,19 @@ A full place import reads 13.5 million place rows and 19 million alternate names
 | `fetch` | Download and unpack GeoNames files only |
 | `build` | Rebuild the place tables from GeoNames files already present |
 
+TimeZoneDB data is downloaded and loaded only by `import` (with no `--only`, or with `--only timezones`). `check` reports whether a newer release exists. `fetch` and `build` are the two halves of the GeoNames import and do not touch it.
+
 ### Options
 
 | Option | Applies to | Meaning |
 | --- | --- | --- |
 | `--only <geonames\|timezones>` | `import`, `check` | Work on one data set. Default: both. |
-| `--data-dir <DIR>` | all | Where the GeoNames text files live. Default `data/geonames`, or `GEOTZ_DATA_DIR`. |
-| `--tz-dir <DIR>` | all | Where the TimeZoneDB SQL file lives. Default `data/timezonedb`, or `GEOTZ_TZ_DIR`. |
-| `--db <FILE>` | all | SQLite file. Default `data/geotz.db`, or `GEOTZ_DB`. |
+| `--data-path <DIR>` | all | Directory for the database and downloaded files. Default `data`. |
+| `--data-dir <DIR>` | all | Where the GeoNames text files live. Default `<data path>/geonames`. |
+| `--tz-dir <DIR>` | all | Where the TimeZoneDB SQL file lives. Default `<data path>/timezonedb`. |
+| `--db <FILE>` | all | SQLite file. Default `<data path>/geotz.db`. |
+| `--geonames-url <URL>` | `import`, `check`, `fetch` | Where GeoNames files are downloaded from. |
+| `--timezonedb-url <URL>` | `import`, `check` | Where `TimeZoneDB.sql.zip` is downloaded from. |
 | `--countries GB,IE` | all | Places only: use per-country files, not `allCountries`. Handy for quick tests. |
 | `--force` | `import`, `fetch` | Download everything again. |
 | `--offline` | all | Never contact the servers. |

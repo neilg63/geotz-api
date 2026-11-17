@@ -17,7 +17,13 @@ use sqlx::{Connection, QueryBuilder, Sqlite};
 use super::Config;
 use super::db;
 
-pub const TIMEZONEDB_URL: &str = "https://timezonedb.com/files/TimeZoneDB.sql.zip";
+/// Name of the archive under the TimeZoneDB files URL.
+const ZIP_FILE: &str = "TimeZoneDB.sql.zip";
+
+/// Full address of the archive for these settings.
+pub fn zip_url(config: &Config) -> String {
+    format!("{}{ZIP_FILE}", config.timezonedb_url)
+}
 const SQL_FILE: &str = "time_zone.sql";
 const MANIFEST_FILE: &str = "manifest.json";
 const USER_AGENT: &str = concat!("geotz-import/", env!("CARGO_PKG_VERSION"));
@@ -199,18 +205,19 @@ fn local_release(config: &Config) -> Option<Release> {
 }
 
 /// Downloads the zip and returns the SQL text with its release identity.
-async fn download() -> Result<(String, Release)> {
+async fn download(config: &Config) -> Result<(String, Release)> {
+    let url = zip_url(config);
     let client = reqwest::Client::builder()
         .user_agent(USER_AGENT)
         .connect_timeout(Duration::from_secs(30))
         .timeout(Duration::from_secs(300))
         .build()?;
     let zip_bytes = client
-        .get(TIMEZONEDB_URL)
+        .get(&url)
         .send()
         .await
         .and_then(|r| r.error_for_status())
-        .with_context(|| format!("cannot download {TIMEZONEDB_URL}"))?
+        .with_context(|| format!("cannot download {url}"))?
         .bytes()
         .await?;
     let mut archive = zip::ZipArchive::new(Cursor::new(zip_bytes))
@@ -239,7 +246,7 @@ async fn ensure(config: &Config) -> Result<(String, Release, bool)> {
         println!("  kept  {SQL_FILE} (offline)");
         return Ok((fs::read_to_string(sql_path(config))?, release, false));
     }
-    let (sql, release) = match download().await {
+    let (sql, release) = match download(config).await {
         Ok(found) => found,
         Err(e) => {
             let Some(release) = local else { return Err(e) };
@@ -264,7 +271,7 @@ async fn ensure(config: &Config) -> Result<(String, Release, bool)> {
 /// Compares the server's release with the local copy. Returns `true` when an
 /// update is available. Downloads the zip (under 1 MB) but writes nothing.
 pub async fn check(config: &Config) -> Result<bool> {
-    let (_, remote) = download().await?;
+    let (_, remote) = download(config).await?;
     let dated = remote.date.clone().unwrap_or_else(|| "undated".into());
     match local_release(config) {
         Some(local) if local == remote => {

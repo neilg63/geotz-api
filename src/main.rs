@@ -7,17 +7,34 @@ use geotz_api::import::{self, Config, timezonedb};
 #[derive(Parser)]
 #[command(version, about = "GeoTimeZone API and data tools")]
 struct Cli {
+    /// Directory for everything the app stores: the database and the
+    /// downloaded source files
+    #[arg(long, global = true, default_value = "data", env = "DATA_PATH")]
+    data_path: PathBuf,
+
     /// Directory holding the unpacked GeoNames files
-    #[arg(long, global = true, default_value = "data/geonames", env = "GEOTZ_DATA_DIR")]
-    data_dir: PathBuf,
+    /// [default: <DATA_PATH>/geonames]
+    #[arg(long, global = true, env = "GEOTZ_DATA_DIR")]
+    data_dir: Option<PathBuf>,
 
     /// Directory holding the unpacked TimeZoneDB file
-    #[arg(long, global = true, default_value = "data/timezonedb", env = "GEOTZ_TZ_DIR")]
-    tz_dir: PathBuf,
+    /// [default: <DATA_PATH>/timezonedb]
+    #[arg(long, global = true, env = "GEOTZ_TZ_DIR")]
+    tz_dir: Option<PathBuf>,
 
-    /// SQLite database file
-    #[arg(long, global = true, default_value = "data/geotz.db", env = "GEOTZ_DB")]
-    db: PathBuf,
+    /// SQLite database file [default: <DATA_PATH>/geotz.db]
+    #[arg(long, global = true, env = "GEOTZ_DB")]
+    db: Option<PathBuf>,
+
+    /// Where GeoNames files are downloaded from
+    #[arg(long, global = true, value_name = "URL", default_value = import::GEONAMES_DUMP_URL,
+          env = "GEONAMES_BASE_DOWNLOAD_URL")]
+    geonames_url: String,
+
+    /// Where TimeZoneDB.sql.zip is downloaded from
+    #[arg(long, global = true, value_name = "URL", default_value = import::TIMEZONEDB_FILES_URL,
+          env = "TIMEZONEDB_BASE_DOWNLOAD_URL")]
+    timezonedb_url: String,
 
     #[command(subcommand)]
     command: Command,
@@ -43,7 +60,8 @@ enum Command {
         #[arg(long, default_value_t = 8089, env = "GEOTZ_PORT")]
         port: u16,
     },
-    /// Download changed source files, then reload the tables they feed.
+    /// Download changed GeoNames and TimeZoneDB files, then reload the
+    /// tables they feed.
     /// Use for both the first import and later updates.
     Import {
         /// Import one data set only (default: both)
@@ -63,12 +81,14 @@ enum Command {
         #[command(flatten)]
         fetch: FetchArgs,
     },
-    /// Download and unpack changed GeoNames files only
+    /// Download and unpack changed GeoNames files only (TimeZoneDB data is
+    /// fetched by `import`)
     Fetch {
         #[command(flatten)]
         fetch: FetchArgs,
     },
     /// Rebuild the place tables from GeoNames files already downloaded
+    /// (TimeZoneDB tables are reloaded by `import --only timezones --rebuild`)
     Build {
         #[command(flatten)]
         fetch: FetchArgs,
@@ -130,6 +150,8 @@ struct Paths {
     data_dir: PathBuf,
     tz_dir: PathBuf,
     db: PathBuf,
+    geonames_url: String,
+    timezonedb_url: String,
 }
 
 fn config(paths: Paths, fetch: FetchArgs, build: &BuildArgs) -> Result<Config> {
@@ -148,6 +170,8 @@ fn config(paths: Paths, fetch: FetchArgs, build: &BuildArgs) -> Result<Config> {
     };
     Ok(Config {
         languages,
+        geonames_url: import::base_url(&paths.geonames_url),
+        timezonedb_url: import::base_url(&paths.timezonedb_url),
         data_dir: paths.data_dir,
         tz_dir: paths.tz_dir,
         db_path: paths.db,
@@ -235,8 +259,30 @@ async fn import_time_zones(config: &Config, rebuild: bool) -> Result<Option<(u64
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Exit quietly when output is piped into a command that stops reading
+    // (such as `head`), instead of panicking on the closed pipe.
+    #[cfg(unix)]
+    // SAFETY: restores the default SIGPIPE action before any other thread
+    // or signal handler exists.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
+    // Settings may come from a .env file in the working directory. Real
+    // environment variables win over it, and command-line options over both.
+    match dotenvy::dotenv() {
+        Ok(_) => {}
+        Err(error) if error.not_found() => {}
+        Err(error) => eprintln!("warning: ignoring .env: {error}"),
+    }
     let cli = Cli::parse();
-    let paths = Paths { data_dir: cli.data_dir, tz_dir: cli.tz_dir, db: cli.db };
+    let paths = Paths {
+        data_dir: cli.data_dir.unwrap_or_else(|| cli.data_path.join("geonames")),
+        tz_dir: cli.tz_dir.unwrap_or_else(|| cli.data_path.join("timezonedb")),
+        db: cli.db.unwrap_or_else(|| cli.data_path.join("geotz.db")),
+        geonames_url: cli.geonames_url,
+        timezonedb_url: cli.timezonedb_url,
+    };
     match cli.command {
         Command::Serve { host, port } => {
             let pool = geotz_api::api::open_pool(&paths.db).await?;
@@ -257,13 +303,13 @@ async fn main() -> Result<()> {
             let config = config(paths, fetch, &BuildArgs::default())?;
             let mut stale = 0;
             if wants(only, DataSet::Timezones) {
-                println!("TimeZoneDB: checking {}", timezonedb::TIMEZONEDB_URL);
+                println!("TimeZoneDB: checking {}", timezonedb::zip_url(&config));
                 let changed = timezonedb::check(&config).await?;
                 import::db::record_check(&config.db_path, "timezonedb", changed).await?;
                 stale += changed as usize;
             }
             if wants(only, DataSet::Geonames) {
-                println!("GeoNames: checking {}", import::GEONAMES_DUMP_URL);
+                println!("GeoNames: checking {}", config.geonames_url);
                 let changed = import::check_all(&config).await?;
                 import::db::record_check(&config.db_path, "geonames", changed > 0).await?;
                 stale += changed;
