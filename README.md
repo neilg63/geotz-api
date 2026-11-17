@@ -303,6 +303,22 @@ For a radius of `d` km around (`lat`, `lng`):
 
 A box query around Edinburgh returns in about 0.15 ms. R*Tree stores coordinates as 32-bit floats (accurate to about a metre), so read exact coordinates from `toponyms`.
 
+## Windows
+
+The service is developed for and tested on Linux. It cross-compiles for Windows without changes, but has not been run there, so treat Windows as suitable for testing rather than production.
+
+```bash
+cargo build --release --target x86_64-pc-windows-gnu
+```
+
+Points to be aware of:
+
+- **Building natively** needs the Visual Studio C++ build tools, and the TLS library used for downloads may also ask for NASM.
+- **Files open in another program** (an editor, antivirus scan or indexer) cannot be replaced or deleted on Windows, so an import or `--discard-sources` can stop with an error. Running it again recovers.
+- **Keep the database on a local disk**, not a network share.
+- **Scheduling:** use Task Scheduler to run `geotz-api import` where the examples here use cron.
+- The first `serve` may raise a firewall prompt.
+
 ## Development
 
 ```bash
