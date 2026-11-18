@@ -85,7 +85,11 @@ pub struct WeekDay {
 fn week_day(local_ts: i64) -> Option<WeekDay> {
     let dt = DateTime::from_timestamp(local_ts, 0)?;
     let iso = dt.weekday().number_from_monday();
-    Some(WeekDay { iso, sun: iso % 7 + 1, abbr: dt.format("%a").to_string() })
+    Some(WeekDay {
+        iso,
+        sun: iso % 7 + 1,
+        abbr: dt.format("%a").to_string(),
+    })
 }
 
 /// An offset in force from `start` until the next period of the same zone.
@@ -180,7 +184,14 @@ pub struct TimeZone {
 }
 
 impl TimeZone {
-    fn new(zone_name: &str, country_code: &str, abbreviation: &str, offset: i64, dst: bool, utc: i64) -> Self {
+    fn new(
+        zone_name: &str,
+        country_code: &str,
+        abbreviation: &str,
+        offset: i64,
+        dst: bool,
+        utc: i64,
+    ) -> Self {
         TimeZone {
             zone_name: zone_name.to_owned(),
             country_code: country_code.to_owned(),
@@ -205,7 +216,11 @@ impl TimeZone {
             When::Utc(ts) | When::Local(ts) => ts,
         };
         let before_1900 = reading < -2_208_988_800;
-        let offset = if before_1900 { solar_offset(lng) } else { nautical_offset(lng) };
+        let offset = if before_1900 {
+            solar_offset(lng)
+        } else {
+            nautical_offset(lng)
+        };
         let utc = match when {
             When::Utc(ts) => ts,
             When::Local(ts) => ts - offset,
@@ -235,7 +250,11 @@ fn sea_area(lat: f64, lng: f64) -> &'static str {
     } else if (20.0..147.0).contains(&lng) && lat < 30.0 {
         "Indian"
     } else if (-70.0..20.0).contains(&lng) {
-        if lat >= 0.0 { "North_Atlantic" } else { "South_Atlantic" }
+        if lat >= 0.0 {
+            "North_Atlantic"
+        } else {
+            "South_Atlantic"
+        }
     } else if lat >= 0.0 {
         "North_Pacific"
     } else {
@@ -255,7 +274,11 @@ fn period_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ZonePeriod, sqlx::Er
 
 /// The periods of a zone that could contain `local`: everything starting
 /// within two days either side, plus the one in force before that window.
-async fn periods_near(pool: &SqlitePool, zone: &str, local: i64) -> Result<Vec<ZonePeriod>, ApiError> {
+async fn periods_near(
+    pool: &SqlitePool,
+    zone: &str,
+    local: i64,
+) -> Result<Vec<ZonePeriod>, ApiError> {
     const WINDOW: i64 = 2 * 86_400;
     let rows = sqlx::query(
         "SELECT time_start, gmt_offset, abbreviation, dst, country_code FROM (
@@ -279,7 +302,8 @@ async fn period_at(
     zone: &str,
     utc: i64,
 ) -> Result<(Option<ZonePeriod>, Option<ZonePeriod>), ApiError> {
-    const COLUMNS: &str = "SELECT time_start, gmt_offset, abbreviation, dst, country_code FROM time_zones";
+    const COLUMNS: &str =
+        "SELECT time_start, gmt_offset, abbreviation, dst, country_code FROM time_zones";
     let current = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{COLUMNS} WHERE zone_name = ? AND time_start <= ? ORDER BY time_start DESC LIMIT 1"
     )))
@@ -339,14 +363,27 @@ pub async fn zone_time(
                     When::Utc(ts) => ts,
                     When::Local(ts) => ts - first.offset,
                 };
-                TimeZone::new(zone, &first.country_code, &first.abbreviation, first.offset, first.dst, utc)
+                TimeZone::new(
+                    zone,
+                    &first.country_code,
+                    &first.abbreviation,
+                    first.offset,
+                    first.dst,
+                    utc,
+                )
             }
         }));
     };
 
     let utc = utc.unwrap_or_default();
-    let mut zone_time =
-        TimeZone::new(zone, &current.country_code, &current.abbreviation, current.offset, current.dst, utc);
+    let mut zone_time = TimeZone::new(
+        zone,
+        &current.country_code,
+        &current.abbreviation,
+        current.offset,
+        current.dst,
+        utc,
+    );
     zone_time.period = Period {
         start: Some(current.start),
         start_utc: Some(format_datetime(current.start)),
@@ -391,9 +428,20 @@ mod tests {
         assert_eq!(parse_datetime("1970-01-02T00:00:01"), Some(86_401));
         assert_eq!(parse_datetime("2010-03-14 08:00"), Some(1_268_553_600));
         assert_eq!(parse_datetime("2010-03-14T08"), Some(1_268_553_600));
-        assert_eq!(parse_datetime(" 2010-03-14T08:00:00.75Z "), Some(1_268_553_600));
+        assert_eq!(
+            parse_datetime(" 2010-03-14T08:00:00.75Z "),
+            Some(1_268_553_600)
+        );
         assert_eq!(parse_datetime("1890-01-01T12:00:00"), Some(-2_524_478_400));
-        for bad in ["", "2010", "2010-13-01", "2010-02-30", "2010-03-14T25:00", "2010-03-14T08:00:00:00", "yesterday"] {
+        for bad in [
+            "",
+            "2010",
+            "2010-13-01",
+            "2010-02-30",
+            "2010-03-14T25:00",
+            "2010-03-14T08:00:00:00",
+            "yesterday",
+        ] {
             assert_eq!(parse_datetime(bad), None, "{bad}");
         }
     }
@@ -413,40 +461,91 @@ mod tests {
     fn local_time_before_and_after_dst_start() {
         // DST starts at 2010-03-14T08:00:00 UTC (02:00 local standard time).
         let zone = chicago();
-        assert_eq!(utc_of(&zone, "2010-03-14T00:00:00", true), "2010-03-14T06:00:00");
-        assert_eq!(utc_of(&zone, "2010-03-14T01:59:59", true), "2010-03-14T07:59:59");
-        assert_eq!(utc_of(&zone, "2010-03-14T03:00:00", true), "2010-03-14T08:00:00");
-        assert_eq!(utc_of(&zone, "2010-07-01T12:00:00", true), "2010-07-01T17:00:00");
-        assert_eq!(utc_of(&zone, "2010-01-01T12:00:00", true), "2010-01-01T18:00:00");
+        assert_eq!(
+            utc_of(&zone, "2010-03-14T00:00:00", true),
+            "2010-03-14T06:00:00"
+        );
+        assert_eq!(
+            utc_of(&zone, "2010-03-14T01:59:59", true),
+            "2010-03-14T07:59:59"
+        );
+        assert_eq!(
+            utc_of(&zone, "2010-03-14T03:00:00", true),
+            "2010-03-14T08:00:00"
+        );
+        assert_eq!(
+            utc_of(&zone, "2010-07-01T12:00:00", true),
+            "2010-07-01T17:00:00"
+        );
+        assert_eq!(
+            utc_of(&zone, "2010-01-01T12:00:00", true),
+            "2010-01-01T18:00:00"
+        );
     }
 
     #[test]
     fn skipped_local_times_move_past_the_gap() {
         // 02:00-02:59 local does not exist on 2010-03-14.
         let zone = chicago();
-        assert_eq!(utc_of(&zone, "2010-03-14T02:30:00", true), "2010-03-14T08:30:00");
-        assert_eq!(utc_of(&zone, "2010-03-14T02:30:00", false), "2010-03-14T08:30:00");
-        assert_eq!(utc_of(&zone, "2010-03-14T02:00:00", true), "2010-03-14T08:00:00");
+        assert_eq!(
+            utc_of(&zone, "2010-03-14T02:30:00", true),
+            "2010-03-14T08:30:00"
+        );
+        assert_eq!(
+            utc_of(&zone, "2010-03-14T02:30:00", false),
+            "2010-03-14T08:30:00"
+        );
+        assert_eq!(
+            utc_of(&zone, "2010-03-14T02:00:00", true),
+            "2010-03-14T08:00:00"
+        );
     }
 
     #[test]
     fn repeated_local_times_follow_the_dst_choice() {
         // 01:00-01:59 local occurs twice on 2010-11-07.
         let zone = chicago();
-        assert_eq!(utc_of(&zone, "2010-11-07T01:30:00", true), "2010-11-07T06:30:00");
-        assert_eq!(utc_of(&zone, "2010-11-07T01:30:00", false), "2010-11-07T07:30:00");
-        assert_eq!(utc_of(&zone, "2010-11-07T00:59:59", false), "2010-11-07T05:59:59");
-        assert_eq!(utc_of(&zone, "2010-11-07T02:00:00", true), "2010-11-07T08:00:00");
+        assert_eq!(
+            utc_of(&zone, "2010-11-07T01:30:00", true),
+            "2010-11-07T06:30:00"
+        );
+        assert_eq!(
+            utc_of(&zone, "2010-11-07T01:30:00", false),
+            "2010-11-07T07:30:00"
+        );
+        assert_eq!(
+            utc_of(&zone, "2010-11-07T00:59:59", false),
+            "2010-11-07T05:59:59"
+        );
+        assert_eq!(
+            utc_of(&zone, "2010-11-07T02:00:00", true),
+            "2010-11-07T08:00:00"
+        );
     }
 
     #[test]
     fn positive_offsets_and_missing_history() {
         // Europe/London, autumn 2022: BST (+3600) to GMT at 01:00 UTC.
-        let london = vec![period("2022-03-27T01:00:00", 3600), period("2022-10-30T01:00:00", 0)];
-        assert_eq!(utc_of(&london, "2022-10-30T00:30:00", true), "2022-10-29T23:30:00");
-        assert_eq!(utc_of(&london, "2022-10-30T01:30:00", true), "2022-10-30T00:30:00");
-        assert_eq!(utc_of(&london, "2022-10-30T01:30:00", false), "2022-10-30T01:30:00");
-        assert_eq!(utc_of(&london, "2022-10-30T02:30:00", true), "2022-10-30T02:30:00");
+        let london = vec![
+            period("2022-03-27T01:00:00", 3600),
+            period("2022-10-30T01:00:00", 0),
+        ];
+        assert_eq!(
+            utc_of(&london, "2022-10-30T00:30:00", true),
+            "2022-10-29T23:30:00"
+        );
+        assert_eq!(
+            utc_of(&london, "2022-10-30T01:30:00", true),
+            "2022-10-30T00:30:00"
+        );
+        assert_eq!(
+            utc_of(&london, "2022-10-30T01:30:00", false),
+            "2022-10-30T01:30:00"
+        );
+        assert_eq!(
+            utc_of(&london, "2022-10-30T02:30:00", true),
+            "2022-10-30T02:30:00"
+        );
         let before_records = parse_datetime("2000-01-01").unwrap();
         assert_eq!(local_to_utc(&london, before_records, true), None);
         assert_eq!(local_to_utc(&[], before_records, true), None);
@@ -467,14 +566,35 @@ mod tests {
 
     #[test]
     fn natural_zones_use_solar_time_before_1900() {
-        let old = TimeZone::natural("Europe/London", "GB", -3.1875, When::Utc(parse_datetime("1800-01-01T12:00:00").unwrap()));
+        let old = TimeZone::natural(
+            "Europe/London",
+            "GB",
+            -3.1875,
+            When::Utc(parse_datetime("1800-01-01T12:00:00").unwrap()),
+        );
         assert_eq!((old.abbreviation.as_str(), old.gmt_offset), ("SOL", -765));
         assert_eq!(old.local_dt, "1800-01-01T11:47:15");
-        let sea = TimeZone::at_sea(30.0, -40.0, When::Local(parse_datetime("2022-07-01T12:00:00").unwrap()));
+        let sea = TimeZone::at_sea(
+            30.0,
+            -40.0,
+            When::Local(parse_datetime("2022-07-01T12:00:00").unwrap()),
+        );
         assert_eq!(sea.zone_name, "North_Atlantic/03W");
-        assert_eq!((sea.abbreviation.as_str(), sea.gmt_offset), ("LOC", -10_800));
-        assert_eq!((sea.utc.as_str(), sea.local_dt.as_str()), ("2022-07-01T15:00:00", "2022-07-01T12:00:00"));
-        assert_eq!(TimeZone::at_sea(-10.0, 80.0, When::Utc(0)).zone_name, "Indian/05E");
-        assert_eq!(TimeZone::at_sea(10.0, -150.0, When::Utc(0)).zone_name, "North_Pacific/10W");
+        assert_eq!(
+            (sea.abbreviation.as_str(), sea.gmt_offset),
+            ("LOC", -10_800)
+        );
+        assert_eq!(
+            (sea.utc.as_str(), sea.local_dt.as_str()),
+            ("2022-07-01T15:00:00", "2022-07-01T12:00:00")
+        );
+        assert_eq!(
+            TimeZone::at_sea(-10.0, 80.0, When::Utc(0)).zone_name,
+            "Indian/05E"
+        );
+        assert_eq!(
+            TimeZone::at_sea(10.0, -150.0, When::Utc(0)).zone_name,
+            "North_Pacific/10W"
+        );
     }
 }

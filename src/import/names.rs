@@ -57,7 +57,11 @@ impl Languages {
                 "major" => languages.major.extend(codes),
                 key => match key.strip_prefix("regional.") {
                     Some(cc) if cc.len() == 2 => {
-                        languages.regional.entry(cc.to_uppercase()).or_default().extend(codes);
+                        languages
+                            .regional
+                            .entry(cc.to_uppercase())
+                            .or_default()
+                            .extend(codes);
                     }
                     _ => bail!("line {}: unknown key `{key}`", number + 1),
                 },
@@ -74,8 +78,14 @@ impl Languages {
             if cols.len() < 16 || cols[0].len() != 2 {
                 continue;
             }
-            let codes = cols[15].split(',').map(base_language).filter(|c| !c.is_empty());
-            self.official.entry(cols[0].to_owned()).or_default().extend(codes);
+            let codes = cols[15]
+                .split(',')
+                .map(base_language)
+                .filter(|c| !c.is_empty());
+            self.official
+                .entry(cols[0].to_owned())
+                .or_default()
+                .extend(codes);
         }
     }
 
@@ -132,10 +142,17 @@ impl Languages {
             codes.sort_unstable();
             codes.join(" ")
         };
-        let mut regional: Vec<String> =
-            self.regional.iter().map(|(cc, set)| format!("{cc}={}", sorted(set))).collect();
+        let mut regional: Vec<String> = self
+            .regional
+            .iter()
+            .map(|(cc, set)| format!("{cc}={}", sorted(set)))
+            .collect();
         regional.sort_unstable();
-        format!("latin, by population; major={}; regional: {}", sorted(&self.major), regional.join(", "))
+        format!(
+            "latin, by population; major={}; regional: {}",
+            sorted(&self.major),
+            regional.join(", ")
+        )
     }
 
     /// Weight for a name in `lang` belonging to a place in country `cc`, or
@@ -225,7 +242,14 @@ impl<'a> AltName<'a> {
         if name.is_empty() {
             return None;
         }
-        Some(AltName { geoname_id, lang, name, preferred, colloquial, historic })
+        Some(AltName {
+            geoname_id,
+            lang,
+            name,
+            preferred,
+            colloquial,
+            historic,
+        })
     }
 }
 
@@ -240,47 +264,134 @@ mod tests {
     }
 
     fn alt(lang: &'static str, name: &'static str) -> AltName<'static> {
-        AltName { geoname_id: 1, lang, name, preferred: false, colloquial: false, historic: false }
+        AltName {
+            geoname_id: 1,
+            lang,
+            name,
+            preferred: false,
+            colloquial: false,
+            historic: false,
+        }
     }
 
     #[test]
     fn munich_keeps_only_the_forms_people_use() {
         let l = languages();
-        assert_eq!(l.weigh("DE", &AltName { preferred: true, ..alt("de", "München") }), Some(95));
+        assert_eq!(
+            l.weigh(
+                "DE",
+                &AltName {
+                    preferred: true,
+                    ..alt("de", "München")
+                }
+            ),
+            Some(95)
+        );
         assert_eq!(l.weigh("DE", &alt("de", "Muenchen")), Some(90));
         assert_eq!(l.weigh("DE", &alt("bar", "Minga")), Some(80));
         assert_eq!(l.weigh("DE", &alt("en", "Munich")), Some(70));
         assert_eq!(l.weigh("DE", &alt("it", "Monaco di Baviera")), Some(50));
-        assert_eq!(l.weigh("DE", &alt("pl", "Monachium")), None, "not a listed language");
-        assert_eq!(l.weigh("DE", &alt("ru", "Мюнхен")), None, "not Latin script");
-        assert_eq!(l.weigh("DE", &alt("", "Munchen")), None, "untagged names are dropped");
+        assert_eq!(
+            l.weigh("DE", &alt("pl", "Monachium")),
+            None,
+            "not a listed language"
+        );
+        assert_eq!(
+            l.weigh("DE", &alt("ru", "Мюнхен")),
+            None,
+            "not Latin script"
+        );
+        assert_eq!(
+            l.weigh("DE", &alt("", "Munchen")),
+            None,
+            "untagged names are dropped"
+        );
         assert_eq!(l.weigh("DE", &alt("iata", "MUC")), None);
-        assert_eq!(l.weigh("FR", &alt("fr_1793", "Port-la-Montagne")), None, "pseudo-language");
+        assert_eq!(
+            l.weigh("FR", &alt("fr_1793", "Port-la-Montagne")),
+            None,
+            "pseudo-language"
+        );
     }
 
     #[test]
     fn regional_and_official_languages_apply_per_country() {
         let l = languages();
-        assert_eq!(l.weigh("AT", &alt("bar", "Wean")), None, "bar is regional for DE only here");
-        assert_eq!(l.weigh("CH", &alt("fr", "Genève")), Some(90), "official beats major");
-        assert_eq!(l.weigh("CH", &alt("fr-CH", "Genève")), Some(90), "region suffix ignored");
+        assert_eq!(
+            l.weigh("AT", &alt("bar", "Wean")),
+            None,
+            "bar is regional for DE only here"
+        );
+        assert_eq!(
+            l.weigh("CH", &alt("fr", "Genève")),
+            Some(90),
+            "official beats major"
+        );
+        assert_eq!(
+            l.weigh("CH", &alt("fr-CH", "Genève")),
+            Some(90),
+            "region suffix ignored"
+        );
         assert_eq!(l.weigh("CH", &alt("rm", "Genevra")), Some(90));
     }
 
     #[test]
     fn flags_adjust_the_weight() {
         let l = languages();
-        assert_eq!(l.weigh("IN", &AltName { historic: true, ..alt("en", "Bombay") }), Some(40));
-        assert_eq!(l.weigh("DE", &AltName { colloquial: true, ..alt("en", "Munich") }), Some(60));
-        assert_eq!(l.weigh("DE", &AltName { historic: true, ..alt("it", "Monaco") }), Some(20));
+        assert_eq!(
+            l.weigh(
+                "IN",
+                &AltName {
+                    historic: true,
+                    ..alt("en", "Bombay")
+                }
+            ),
+            Some(40)
+        );
+        assert_eq!(
+            l.weigh(
+                "DE",
+                &AltName {
+                    colloquial: true,
+                    ..alt("en", "Munich")
+                }
+            ),
+            Some(60)
+        );
+        assert_eq!(
+            l.weigh(
+                "DE",
+                &AltName {
+                    historic: true,
+                    ..alt("it", "Monaco")
+                }
+            ),
+            Some(20)
+        );
     }
 
     #[test]
     fn latin_script_detection() {
-        for name in ["München", "Łódź", "Hà Nội", "Saint-Étienne", "O'Fallon", "İstanbul", "Aix 2"] {
+        for name in [
+            "München",
+            "Łódź",
+            "Hà Nội",
+            "Saint-Étienne",
+            "O'Fallon",
+            "İstanbul",
+            "Aix 2",
+        ] {
             assert!(is_latin(name), "{name}");
         }
-        for name in ["Мюнхен", "慕尼黑", "ميونخ", "Αθήνα", "München Мюнхен", "12345", ""] {
+        for name in [
+            "Мюнхен",
+            "慕尼黑",
+            "ميونخ",
+            "Αθήνα",
+            "München Мюнхен",
+            "12345",
+            "",
+        ] {
             assert!(!is_latin(name), "{name}");
         }
     }
@@ -288,7 +399,17 @@ mod tests {
     #[test]
     fn alternate_name_rows_parse() {
         let row = AltName::parse("1562893\t2867714\tde\tMünchen\t1\t\t\t\t\t").unwrap();
-        assert_eq!(row, AltName { geoname_id: 2867714, lang: "de", name: "München", preferred: true, colloquial: false, historic: false });
+        assert_eq!(
+            row,
+            AltName {
+                geoname_id: 2867714,
+                lang: "de",
+                name: "München",
+                preferred: true,
+                colloquial: false,
+                historic: false
+            }
+        );
         let historic = AltName::parse("9\t1275339\ten\tBombay\t\t\t\t1\t\t1995").unwrap();
         assert!(historic.historic && !historic.preferred);
         let short = AltName::parse("7\t5\tfr\tParis").unwrap();
@@ -300,7 +421,10 @@ mod tests {
     fn language_code_file_tidies_and_validates() {
         let iso = "ISO 639-3\tISO 639-2\tISO 639-1\tLanguage Name\nbar\t\t\tBavarian\ndeu\tdeu / ger*\tde\tGerman\nfra\tfra / fre*\tfr\tFrench\n";
         let mut l = Languages::parse("major = deu fr xx\nregional.DE = bar brr\n").unwrap();
-        assert_eq!(l.check_codes(iso), vec!["brr".to_string(), "xx".to_string()]);
+        assert_eq!(
+            l.check_codes(iso),
+            vec!["brr".to_string(), "xx".to_string()]
+        );
         assert!(l.major.contains("de") && !l.major.contains("deu"));
         assert!(l.regional["DE"].contains("bar"));
     }

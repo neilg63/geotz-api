@@ -84,13 +84,20 @@ pub fn parse_dump(sql: &str) -> Result<Dump> {
     let mut dump = Dump::default();
     for (start, marker) in sql.match_indices("INSERT INTO ") {
         let mut pos = start + marker.len();
-        let name_end = pos + bytes[pos..].iter().position(|b| b.is_ascii_whitespace() || *b == b'(')
-            .context("unterminated INSERT statement")?;
+        let name_end = pos
+            + bytes[pos..]
+                .iter()
+                .position(|b| b.is_ascii_whitespace() || *b == b'(')
+                .context("unterminated INSERT statement")?;
         let table = sql[pos..name_end].trim_matches('`');
         if table != "country" && table != "time_zone" {
             continue;
         }
-        pos = name_end + sql[name_end..].find("VALUES").context("INSERT without VALUES")? + 6;
+        pos = name_end
+            + sql[name_end..]
+                .find("VALUES")
+                .context("INSERT without VALUES")?
+            + 6;
         loop {
             while pos < bytes.len() && (bytes[pos].is_ascii_whitespace() || bytes[pos] == b',') {
                 pos += 1;
@@ -157,7 +164,12 @@ fn parse_tuple(bytes: &[u8], mut pos: usize) -> Result<(Vec<String>, usize)> {
                 pos += 1;
             }
         }
-        fields.push(String::from_utf8(field).context("SQL row is not valid UTF-8")?.trim().to_owned());
+        fields.push(
+            String::from_utf8(field)
+                .context("SQL row is not valid UTF-8")?
+                .trim()
+                .to_owned(),
+        );
         match bytes.get(pos) {
             Some(b',') => pos += 1,
             Some(b')') => return Ok((fields, pos + 1)),
@@ -169,7 +181,10 @@ fn parse_tuple(bytes: &[u8], mut pos: usize) -> Result<(Vec<String>, usize)> {
 fn country_row(fields: Vec<String>) -> Result<Country> {
     let [code, name] = <[String; 2]>::try_from(fields)
         .map_err(|f| anyhow::anyhow!("country row has {} fields, expected 2", f.len()))?;
-    Ok(Country { country_code: code, country_name: name })
+    Ok(Country {
+        country_code: code,
+        country_name: name,
+    })
 }
 
 fn period_row(fields: Vec<String>) -> Result<ZonePeriod> {
@@ -177,8 +192,12 @@ fn period_row(fields: Vec<String>) -> Result<ZonePeriod> {
         <[String; 6]>::try_from(fields)
             .map_err(|f| anyhow::anyhow!("time_zone row has {} fields, expected 6", f.len()))?;
     Ok(ZonePeriod {
-        time_start: start.parse().with_context(|| format!("bad time_start {start:?} for {zone_name}"))?,
-        gmt_offset: offset.parse().with_context(|| format!("bad gmt_offset {offset:?} for {zone_name}"))?,
+        time_start: start
+            .parse()
+            .with_context(|| format!("bad time_start {start:?} for {zone_name}"))?,
+        gmt_offset: offset
+            .parse()
+            .with_context(|| format!("bad gmt_offset {offset:?} for {zone_name}"))?,
         dst: dst == "1",
         zone_name,
         country_code,
@@ -227,10 +246,15 @@ async fn download(config: &Config) -> Result<(String, Release)> {
     let date = entry
         .last_modified()
         .map(|d| format!("{:04}-{:02}-{:02}", d.year(), d.month(), d.day()));
-    let release = Release { crc32: entry.crc32(), date };
+    let release = Release {
+        crc32: entry.crc32(),
+        date,
+    };
     let mut sql = String::new();
     // Reading to the end also verifies the CRC.
-    entry.read_to_string(&mut sql).context("cannot unpack time_zone.sql")?;
+    entry
+        .read_to_string(&mut sql)
+        .context("cannot unpack time_zone.sql")?;
     Ok((sql, release))
 }
 
@@ -240,10 +264,16 @@ async fn ensure(config: &Config) -> Result<(String, Release, bool)> {
     let local = local_release(config);
     if config.offline {
         let release = local.with_context(|| {
-            format!("{} is missing and --offline was given", sql_path(config).display())
+            format!(
+                "{} is missing and --offline was given",
+                sql_path(config).display()
+            )
         })?;
         let sql = fs::read_to_string(sql_path(config)).with_context(|| {
-            format!("{} is missing and --offline was given", sql_path(config).display())
+            format!(
+                "{} is missing and --offline was given",
+                sql_path(config).display()
+            )
         })?;
         println!("  kept  {SQL_FILE} (offline)");
         return Ok((sql, release, false));
@@ -252,8 +282,9 @@ async fn ensure(config: &Config) -> Result<(String, Release, bool)> {
         Ok(found) => found,
         Err(e) => {
             let Some(release) = local else { return Err(e) };
-            let sql = fs::read_to_string(sql_path(config))
-                .with_context(|| format!("cannot download the TimeZoneDB file and have no local copy: {e:#}"))?;
+            let sql = fs::read_to_string(sql_path(config)).with_context(|| {
+                format!("cannot download the TimeZoneDB file and have no local copy: {e:#}")
+            })?;
             println!("  kept  {SQL_FILE} (cannot check for updates: {e:#})");
             return Ok((sql, release, false));
         }
@@ -266,7 +297,10 @@ async fn ensure(config: &Config) -> Result<(String, Release, bool)> {
     let staging = config.tz_dir.join(format!("{SQL_FILE}.part"));
     fs::write(&staging, &sql)?;
     fs::rename(&staging, sql_path(config))?;
-    fs::write(manifest_path(config), serde_json::to_string_pretty(&release)?)?;
+    fs::write(
+        manifest_path(config),
+        serde_json::to_string_pretty(&release)?,
+    )?;
     let dated = release.date.clone().unwrap_or_else(|| "undated".into());
     println!("  fetch {SQL_FILE} (release {dated})");
     Ok((sql, release, true))
@@ -275,7 +309,9 @@ async fn ensure(config: &Config) -> Result<(String, Release, bool)> {
 /// Deletes the unpacked SQL file to free disk space. Returns bytes freed.
 pub fn discard_source(config: &Config) -> Result<u64> {
     let path = sql_path(config);
-    let Ok(info) = fs::symlink_metadata(&path) else { return Ok(0) };
+    let Ok(info) = fs::symlink_metadata(&path) else {
+        return Ok(0);
+    };
     fs::remove_file(&path).with_context(|| format!("cannot delete {}", path.display()))?;
     Ok(info.len())
 }
@@ -304,10 +340,12 @@ pub async fn check(config: &Config) -> Result<bool> {
 // ------------------------------------------------------------------- loading
 
 async fn meta(conn: &mut sqlx::SqliteConnection, key: &str) -> Result<Option<String>> {
-    Ok(sqlx::query_scalar("SELECT value FROM import_meta WHERE key = ?")
-        .bind(key)
-        .fetch_optional(conn)
-        .await?)
+    Ok(
+        sqlx::query_scalar("SELECT value FROM import_meta WHERE key = ?")
+            .bind(key)
+            .fetch_optional(conn)
+            .await?,
+    )
 }
 
 /// Fetches the current release and reloads both tables if it is new.
@@ -316,8 +354,9 @@ pub async fn import(config: &Config, rebuild: bool) -> Result<Outcome> {
 
     let mut conn = db::open(&config.db_path).await?;
     let loaded_crc = meta(&mut conn, "timezonedb_crc32").await?;
-    let previous_rows: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM time_zones").fetch_one(&mut conn).await?;
+    let previous_rows: i64 = sqlx::query_scalar("SELECT count(*) FROM time_zones")
+        .fetch_one(&mut conn)
+        .await?;
     if !rebuild && previous_rows > 0 && loaded_crc == Some(release.crc32.to_string()) {
         conn.close().await?;
         return Ok(Outcome::UpToDate);
@@ -337,10 +376,17 @@ pub async fn import(config: &Config, rebuild: bool) -> Result<Outcome> {
     }
 
     let started_at = db::unix_now();
-    let mut stats = Stats { release_date: release.date.clone(), ..Stats::default() };
+    let mut stats = Stats {
+        release_date: release.date.clone(),
+        ..Stats::default()
+    };
     let mut tx = conn.begin().await?;
-    sqlx::query("DELETE FROM time_zones").execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM countries").execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM time_zones")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM countries")
+        .execute(&mut *tx)
+        .await?;
 
     stats.countries = dump.countries.len() as u64;
     let mut query: QueryBuilder<Sqlite> =
@@ -392,7 +438,9 @@ pub async fn import(config: &Config, rebuild: bool) -> Result<Outcome> {
             .await?;
     }
     tx.commit().await?;
-    sqlx::raw_sql("PRAGMA optimize; PRAGMA wal_checkpoint(TRUNCATE);").execute(&mut conn).await?;
+    sqlx::raw_sql("PRAGMA optimize; PRAGMA wal_checkpoint(TRUNCATE);")
+        .execute(&mut conn)
+        .await?;
     conn.close().await?;
     Ok(Outcome::Imported(stats))
 }
@@ -424,7 +472,10 @@ INSERT INTO `time_zone` VALUES ('Etc/UTC','','GMT',-2208988800,0,'0'),('Asia/Kol
         let dump = parse_dump(SAMPLE).unwrap();
         assert_eq!(dump.countries.len(), 3);
         assert_eq!(dump.countries[0].country_name, "Côte d'Ivoire");
-        assert_eq!(dump.countries[1].country_name, "Korea, Democratic People's Republic of");
+        assert_eq!(
+            dump.countries[1].country_name,
+            "Korea, Democratic People's Republic of"
+        );
         assert_eq!(dump.periods.len(), 4);
         assert_eq!(
             dump.periods[0],
@@ -453,12 +504,17 @@ INSERT INTO `time_zone` VALUES ('Etc/UTC','','GMT',-2208988800,0,'0'),('Asia/Kol
     #[test]
     fn malformed_rows_are_errors_not_silent_skips() {
         assert!(parse_dump("INSERT INTO `country` VALUES ('GB');").is_err());
-        assert!(parse_dump("INSERT INTO `time_zone` VALUES ('A/B','GB','X','soon',0,'0');").is_err());
+        assert!(
+            parse_dump("INSERT INTO `time_zone` VALUES ('A/B','GB','X','soon',0,'0');").is_err()
+        );
         assert!(parse_dump("INSERT INTO `country` VALUES ('GB','United").is_err());
     }
 
     #[test]
     fn a_dump_without_inserts_is_empty() {
-        assert_eq!(parse_dump("CREATE TABLE `country` (x int);").unwrap(), Dump::default());
+        assert_eq!(
+            parse_dump("CREATE TABLE `country` (x int);").unwrap(),
+            Dump::default()
+        );
     }
 }

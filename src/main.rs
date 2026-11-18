@@ -226,7 +226,16 @@ where
         Ok(None) => ("unchanged", None, String::new()),
         Err(error) => ("failed", None, format!("{error:#}")),
     };
-    if let Err(error) = import::db::log_import(&config.db_path, data_set, started_at, status, records, &detail).await {
+    if let Err(error) = import::db::log_import(
+        &config.db_path,
+        data_set,
+        started_at,
+        status,
+        records,
+        &detail,
+    )
+    .await
+    {
         eprintln!("warning: could not write the import log: {error:#}");
     }
     outcome.map(|_| ())
@@ -234,31 +243,55 @@ where
 
 fn report_freed(what: &str, bytes: u64) {
     if bytes > 0 {
-        println!("{what}: source files deleted, {} freed", import::fetch::human_size(bytes));
+        println!(
+            "{what}: source files deleted, {} freed",
+            import::fetch::human_size(bytes)
+        );
     } else {
         println!("{what}: no source files to delete");
     }
 }
 
 fn scope(config: &Config) -> String {
-    if config.countries.is_empty() { "all countries".into() } else { config.countries.join(",").to_uppercase() }
+    if config.countries.is_empty() {
+        "all countries".into()
+    } else {
+        config.countries.join(",").to_uppercase()
+    }
 }
 
 async fn build_places(config: &Config) -> Result<Option<(u64, String)>> {
     println!("Loading places into {}", config.db_path.display());
     let s = import::db::build(config).await?;
-    println!("Imported {} places from {} source rows", s.imported, s.lines);
-    println!("  skipped: {} other feature codes, {} without population, {} malformed",
-        s.other_fcode, s.unpopulated, s.malformed);
-    println!("  without region: {}, without admin name: {}, without time zone: {}",
-        s.no_region, s.no_admin_name, s.no_zone);
-    println!("  region or admin names taken from feature rows: {}", s.renamed);
-    println!("  lookup rows: {} first-level and {} second-level divisions", s.admin1, s.admin2);
-    println!("  search names: {} ({} of {} alternate names kept)",
-        s.search_names, s.alt_names_kept, s.alt_names_read);
+    println!(
+        "Imported {} places from {} source rows",
+        s.imported, s.lines
+    );
+    println!(
+        "  skipped: {} other feature codes, {} without population, {} malformed",
+        s.other_fcode, s.unpopulated, s.malformed
+    );
+    println!(
+        "  without region: {}, without admin name: {}, without time zone: {}",
+        s.no_region, s.no_admin_name, s.no_zone
+    );
+    println!(
+        "  region or admin names taken from feature rows: {}",
+        s.renamed
+    );
+    println!(
+        "  lookup rows: {} first-level and {} second-level divisions",
+        s.admin1, s.admin2
+    );
+    println!(
+        "  search names: {} ({} of {} alternate names kept)",
+        s.search_names, s.alt_names_kept, s.alt_names_read
+    );
     if !s.unknown_languages.is_empty() {
-        println!("  warning: unknown language codes in the language list: {}",
-            s.unknown_languages.join(" "));
+        println!(
+            "  warning: unknown language codes in the language list: {}",
+            s.unknown_languages.join(" ")
+        );
     }
     Ok(Some((s.imported, scope(config))))
 }
@@ -284,8 +317,10 @@ async fn import_time_zones(config: &Config, rebuild: bool) -> Result<Option<(u64
         }
         timezonedb::Outcome::Imported(s) => {
             let release = s.release_date.unwrap_or_else(|| "undated".into());
-            println!("Imported {} offset periods for {} zones and {} countries (release {release})",
-                s.periods, s.zones, s.countries);
+            println!(
+                "Imported {} offset periods for {} zones and {} countries (release {release})",
+                s.periods, s.zones, s.countries
+            );
             Ok(Some((s.periods, format!("release {release}"))))
         }
     }
@@ -311,14 +346,22 @@ async fn main() -> Result<()> {
     }
     let cli = Cli::parse();
     let paths = Paths {
-        data_dir: cli.data_dir.unwrap_or_else(|| cli.data_path.join("geonames")),
-        tz_dir: cli.tz_dir.unwrap_or_else(|| cli.data_path.join("timezonedb")),
+        data_dir: cli
+            .data_dir
+            .unwrap_or_else(|| cli.data_path.join("geonames")),
+        tz_dir: cli
+            .tz_dir
+            .unwrap_or_else(|| cli.data_path.join("timezonedb")),
         db: cli.db.unwrap_or_else(|| cli.data_path.join("geotz.db")),
         geonames_url: cli.geonames_url,
         timezonedb_url: cli.timezonedb_url,
     };
     match cli.command {
-        Command::Serve { host, port, camel_case } => {
+        Command::Serve {
+            host,
+            port,
+            camel_case,
+        } => {
             let pool = geotz_api::api::open_pool(&paths.db).await?;
             geotz_api::api::serve(pool, &host, port, camel_case).await
         }
@@ -326,7 +369,12 @@ async fn main() -> Result<()> {
             let config = config(paths, fetch, &build)?;
             // Time zones first: quick, and independent of the place tables.
             if wants(only, DataSet::Timezones) {
-                logged(&config, "timezonedb", import_time_zones(&config, build.rebuild)).await?;
+                logged(
+                    &config,
+                    "timezonedb",
+                    import_time_zones(&config, build.rebuild),
+                )
+                .await?;
                 if build.discard_sources {
                     report_freed("TimeZoneDB", timezonedb::discard_source(&config)?);
                 }

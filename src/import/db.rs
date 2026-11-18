@@ -88,7 +88,9 @@ const SCHEMA_VERSION: i64 = 4;
 /// Creates missing tables. A database written by an earlier schema version
 /// first loses the tables that changed; the next import refills them.
 async fn migrate(conn: &mut SqliteConnection) -> Result<()> {
-    let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&mut *conn).await?;
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&mut *conn)
+        .await?;
     if version < 2 {
         // v1 had singular TimeZoneDB tables and GeoNames-based `countries`
         // and `time_zones` tables with different columns.
@@ -103,7 +105,11 @@ async fn migrate(conn: &mut SqliteConnection) -> Result<()> {
         .await
         .or_else(|e| {
             // A brand-new file has no import_meta table yet.
-            if e.to_string().contains("no such table") { Ok(Default::default()) } else { Err(e) }
+            if e.to_string().contains("no such table") {
+                Ok(Default::default())
+            } else {
+                Err(e)
+            }
         })?;
     }
     if version < 3 {
@@ -115,7 +121,9 @@ async fn migrate(conn: &mut SqliteConnection) -> Result<()> {
         .fetch_one(&mut *conn)
         .await?;
         if has_column > 0 {
-            sqlx::raw_sql("ALTER TABLE toponyms DROP COLUMN alt_names").execute(&mut *conn).await?;
+            sqlx::raw_sql("ALTER TABLE toponyms DROP COLUMN alt_names")
+                .execute(&mut *conn)
+                .await?;
         }
     }
     if version < 4 {
@@ -128,12 +136,18 @@ async fn migrate(conn: &mut SqliteConnection) -> Result<()> {
         .execute(&mut *conn)
         .await
         .or_else(|e| {
-            if e.to_string().contains("no such table") { Ok(Default::default()) } else { Err(e) }
+            if e.to_string().contains("no such table") {
+                Ok(Default::default())
+            } else {
+                Err(e)
+            }
         })?;
     }
     sqlx::raw_sql(SCHEMA).execute(&mut *conn).await?;
     if version != SCHEMA_VERSION {
-        sqlx::raw_sql("PRAGMA user_version = 4").execute(&mut *conn).await?;
+        sqlx::raw_sql("PRAGMA user_version = 4")
+            .execute(&mut *conn)
+            .await?;
     }
     Ok(())
 }
@@ -160,7 +174,9 @@ pub async fn build(config: &Config) -> Result<Stats> {
 
     // Only comparable when the previous import used the same settings.
     let previous_rows = if settings_match(config, &mut tx).await? {
-        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM toponyms").fetch_one(&mut *tx).await?;
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM toponyms")
+            .fetch_one(&mut *tx)
+            .await?;
         rows as u64
     } else {
         0
@@ -175,7 +191,15 @@ pub async fn build(config: &Config) -> Result<Stats> {
     let mut place_countries: PlaceCountries = HashMap::new();
     for source in config.place_sources() {
         let path = config.local_path(&source.local);
-        load_places(config, &path, &names, &mut tx, &mut stats, &mut place_countries).await?;
+        load_places(
+            config,
+            &path,
+            &names,
+            &mut tx,
+            &mut stats,
+            &mut place_countries,
+        )
+        .await?;
     }
 
     if shrinks_too_much(previous_rows, stats.imported, config.max_drop_percent) {
@@ -226,9 +250,14 @@ pub async fn build(config: &Config) -> Result<Stats> {
     }
 
     tx.commit().await?;
-    sqlx::raw_sql("PRAGMA optimize; PRAGMA wal_checkpoint(TRUNCATE);").execute(&mut conn).await?;
+    sqlx::raw_sql("PRAGMA optimize; PRAGMA wal_checkpoint(TRUNCATE);")
+        .execute(&mut conn)
+        .await?;
     conn.close().await?;
-    println!("  database written in {:.1}s", started.elapsed().as_secs_f64());
+    println!(
+        "  database written in {:.1}s",
+        started.elapsed().as_secs_f64()
+    );
     Ok(stats)
 }
 
@@ -267,7 +296,10 @@ fn settings_meta(config: &Config) -> [(&'static str, String); 4] {
     [
         ("geonames_scope", scope),
         ("geonames_fcodes", fcodes.join(" ")),
-        ("geonames_keep_unpopulated", config.keep_unpopulated.to_string()),
+        (
+            "geonames_keep_unpopulated",
+            config.keep_unpopulated.to_string(),
+        ),
         ("geonames_names", config.languages.signature()),
     ]
 }
@@ -305,7 +337,9 @@ pub async fn settings_current(config: &Config) -> Result<bool> {
     }
     let mut conn = open(&config.db_path).await?;
     let same = settings_match(config, &mut conn).await?;
-    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM toponyms").fetch_one(&mut conn).await?;
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM toponyms")
+        .fetch_one(&mut conn)
+        .await?;
     conn.close().await?;
     Ok(same && rows > 0)
 }
@@ -318,7 +352,9 @@ pub async fn is_current(config: &Config) -> Result<bool> {
     }
     let mut conn = open(&config.db_path).await?;
     let same = settings_match(config, &mut conn).await?;
-    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM toponyms").fetch_one(&mut conn).await?;
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM toponyms")
+        .fetch_one(&mut conn)
+        .await?;
     let imported_at: Option<String> =
         sqlx::query_scalar("SELECT value FROM import_meta WHERE key = 'geonames_imported_at'")
             .fetch_optional(&mut conn)
@@ -331,9 +367,14 @@ pub async fn is_current(config: &Config) -> Result<bool> {
     let mut newest_source = 0;
     for source in &config.all_sources() {
         // A file discarded after import cannot be newer than that import.
-        let Ok(info) = fs::metadata(config.local_path(&source.local)) else { continue };
+        let Ok(info) = fs::metadata(config.local_path(&source.local)) else {
+            continue;
+        };
         let modified = info.modified()?;
-        let secs = modified.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let secs = modified
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         newest_source = newest_source.max(secs);
     }
     Ok(same && rows > 0 && newest_source <= imported_at)
@@ -375,7 +416,10 @@ pub async fn record_check(db_path: &Path, data_set: &str, update_available: bool
     let mut conn = open(db_path).await?;
     let entries = [
         (format!("{data_set}_checked_at"), unix_now().to_string()),
-        (format!("{data_set}_update_available"), update_available.to_string()),
+        (
+            format!("{data_set}_update_available"),
+            update_available.to_string(),
+        ),
     ];
     for (key, value) in entries {
         sqlx::query("INSERT OR REPLACE INTO import_meta (key, value) VALUES (?, ?)")
@@ -491,17 +535,28 @@ async fn load_search_names(
     let mut batch: Vec<(i64, String, String, i64)> = Vec::with_capacity(BATCH_ROWS);
     for source in config.name_sources() {
         let path = config.local_path(&source.local);
-        let file = tokio::fs::File::open(&path)
-            .await
-            .with_context(|| format!("cannot read {} (run the fetch step first)", path.display()))?;
+        let file = tokio::fs::File::open(&path).await.with_context(|| {
+            format!("cannot read {} (run the fetch step first)", path.display())
+        })?;
         let mut lines = BufReader::with_capacity(1 << 20, file).lines();
         while let Some(text) = lines.next_line().await? {
             stats.alt_names_read += 1;
-            let Some(alt) = AltName::parse(&text) else { continue };
-            let Some(cc) = place_countries.get(&alt.geoname_id) else { continue };
+            let Some(alt) = AltName::parse(&text) else {
+                continue;
+            };
+            let Some(cc) = place_countries.get(&alt.geoname_id) else {
+                continue;
+            };
             let cc = std::str::from_utf8(cc).unwrap_or("");
-            let Some(weight) = languages.weigh(cc, &alt) else { continue };
-            batch.push((alt.geoname_id, alt.name.to_owned(), base_language(alt.lang), weight));
+            let Some(weight) = languages.weigh(cc, &alt) else {
+                continue;
+            };
+            batch.push((
+                alt.geoname_id,
+                alt.name.to_owned(),
+                base_language(alt.lang),
+                weight,
+            ));
             if batch.len() == BATCH_ROWS {
                 insert_names(std::mem::take(&mut batch), tx, stats).await?;
             }
@@ -533,7 +588,9 @@ async fn load_search_names(
         .execute(&mut **tx)
         .await
         .context("cannot build search index")?;
-    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM place_names").fetch_one(&mut **tx).await?;
+    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM place_names")
+        .fetch_one(&mut **tx)
+        .await?;
     stats.search_names = total as u64;
     Ok(())
 }
@@ -547,7 +604,10 @@ async fn insert_names(
     let mut query: QueryBuilder<Sqlite> =
         QueryBuilder::new("INSERT INTO place_names (pl_id, name, langs, weight) ");
     query.push_values(batch, |mut row, (id, name, lang, weight)| {
-        row.push_bind(id).push_bind(name).push_bind(lang).push_bind(weight);
+        row.push_bind(id)
+            .push_bind(name)
+            .push_bind(lang)
+            .push_bind(weight);
     });
     // The same spelling in several languages is one row: it keeps its
     // strongest weight and collects every language, so a search can favour
@@ -596,7 +656,11 @@ async fn load_places(
     while let Some(text) = lines.next_line().await? {
         stats.lines += 1;
         if stats.lines.is_multiple_of(2_000_000) {
-            println!("  read {}M lines, kept {}", stats.lines / 1_000_000, stats.imported);
+            println!(
+                "  read {}M lines, kept {}",
+                stats.lines / 1_000_000,
+                stats.imported
+            );
         }
         let Some(line) = PlaceLine::parse(&text) else {
             stats.malformed += 1;
@@ -667,12 +731,24 @@ mod tests {
 
     #[test]
     fn guard_trips_only_on_large_drops() {
-        assert!(!shrinks_too_much(0, 0, 10.0), "first import has nothing to compare");
-        assert!(!shrinks_too_much(1_000_000, 1_050_000, 10.0), "growth is fine");
+        assert!(
+            !shrinks_too_much(0, 0, 10.0),
+            "first import has nothing to compare"
+        );
+        assert!(
+            !shrinks_too_much(1_000_000, 1_050_000, 10.0),
+            "growth is fine"
+        );
         assert!(!shrinks_too_much(1_000_000, 950_000, 10.0));
-        assert!(!shrinks_too_much(1_000_000, 900_000, 10.0), "exactly at the limit passes");
+        assert!(
+            !shrinks_too_much(1_000_000, 900_000, 10.0),
+            "exactly at the limit passes"
+        );
         assert!(shrinks_too_much(1_000_000, 899_999, 10.0));
         assert!(shrinks_too_much(1_000_000, 0, 10.0));
-        assert!(!shrinks_too_much(1_000_000, 0, 100.0), "100 disables the guard");
+        assert!(
+            !shrinks_too_much(1_000_000, 0, 100.0),
+            "100 disables the guard"
+        );
     }
 }

@@ -46,7 +46,11 @@ impl Source {
             Some(stem) => format!("{stem}.txt"),
             None => remote.to_string(),
         };
-        Source { remote: remote.to_string(), member: local.clone(), local }
+        Source {
+            remote: remote.to_string(),
+            member: local.clone(),
+            local,
+        }
     }
 
     /// Alternate names for one country. The archive member is `XX.txt`, the
@@ -129,7 +133,10 @@ impl Config {
         if self.countries.is_empty() {
             vec![Source::new("alternateNamesV2.zip")]
         } else {
-            self.countries.iter().map(|cc| Source::alternate_names(&cc.to_uppercase())).collect()
+            self.countries
+                .iter()
+                .map(|cc| Source::alternate_names(&cc.to_uppercase()))
+                .collect()
         }
     }
 
@@ -163,7 +170,11 @@ pub fn load_fcodes(path: &Path) -> Result<HashSet<String>> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("cannot read feature code list {}", path.display()))?;
     let codes = parse_fcodes(&text);
-    anyhow::ensure!(!codes.is_empty(), "{} lists no feature codes", path.display());
+    anyhow::ensure!(
+        !codes.is_empty(),
+        "{} lists no feature codes",
+        path.display()
+    );
     Ok(codes)
 }
 
@@ -174,7 +185,9 @@ pub fn load_fcodes(path: &Path) -> Result<HashSet<String>> {
 /// downloaded again even if nothing has changed, for a rebuild.
 pub async fn fetch_all(config: &Config, need_files: bool) -> Result<usize> {
     let fetcher = fetch::Fetcher::new(config)?;
-    let downloaded = fetcher.ensure_all(&config.all_sources(), need_files).await?;
+    let downloaded = fetcher
+        .ensure_all(&config.all_sources(), need_files)
+        .await?;
     fetcher.save_manifest()?;
     Ok(downloaded)
 }
@@ -221,13 +234,22 @@ mod tests {
     #[test]
     fn fcode_lists_allow_comments_and_any_whitespace() {
         let codes = parse_fcodes("ppl PPLA # capitals\n\n  adm1\t# first order\n");
-        assert_eq!(codes, HashSet::from(["PPL".into(), "PPLA".into(), "ADM1".into()]));
+        assert_eq!(
+            codes,
+            HashSet::from(["PPL".into(), "PPLA".into(), "ADM1".into()])
+        );
     }
 
     #[test]
     fn base_urls_end_in_one_slash() {
-        assert_eq!(base_url("https://mirror.example/dump"), "https://mirror.example/dump/");
-        assert_eq!(base_url(" https://mirror.example/dump// "), "https://mirror.example/dump/");
+        assert_eq!(
+            base_url("https://mirror.example/dump"),
+            "https://mirror.example/dump/"
+        );
+        assert_eq!(
+            base_url(" https://mirror.example/dump// "),
+            "https://mirror.example/dump/"
+        );
         assert_eq!(base_url(GEONAMES_DUMP_URL), GEONAMES_DUMP_URL);
     }
 
@@ -237,7 +259,10 @@ mod tests {
         assert!(zip.is_zip());
         assert_eq!(zip.local, "GB.txt");
         let names = Source::alternate_names("GB");
-        assert_eq!((names.remote.as_str(), names.member.as_str()), ("alternatenames/GB.zip", "GB.txt"));
+        assert_eq!(
+            (names.remote.as_str(), names.member.as_str()),
+            ("alternatenames/GB.zip", "GB.txt")
+        );
         assert_eq!(names.local, "alternatenames-GB.txt");
         let plain = Source::new(ADMIN2_FILE);
         assert!(!plain.is_zip());

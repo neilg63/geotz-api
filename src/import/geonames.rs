@@ -144,7 +144,8 @@ pub struct AdminNames {
 impl AdminNames {
     pub fn add(&mut self, code: &AdminCode) {
         if code.adm2.is_empty() {
-            self.admin1.insert((code.cc.clone(), code.adm1.clone()), code.name.clone());
+            self.admin1
+                .insert((code.cc.clone(), code.adm1.clone()), code.name.clone());
         } else {
             self.admin2.insert(
                 (code.cc.clone(), code.adm1.clone(), code.adm2.clone()),
@@ -158,7 +159,9 @@ impl AdminNames {
         if adm1.is_empty() {
             return None;
         }
-        self.admin1.get(&(cc.to_owned(), adm1.to_owned())).map(String::as_str)
+        self.admin1
+            .get(&(cc.to_owned(), adm1.to_owned()))
+            .map(String::as_str)
     }
 
     /// Second-level division name, e.g. `City of Edinburgh`.
@@ -205,10 +208,16 @@ mod tests {
     #[test]
     fn admin_codes_parse() {
         let a1 = parse_admin1("GR.ESYE22\tIonian Islands\tIonian Islands\t6697804").unwrap();
-        assert_eq!((a1.cc.as_str(), a1.adm1.as_str(), a1.adm2.as_str()), ("GR", "ESYE22", ""));
+        assert_eq!(
+            (a1.cc.as_str(), a1.adm1.as_str(), a1.adm2.as_str()),
+            ("GR", "ESYE22", "")
+        );
         assert_eq!(a1.geoname_id, Some(6697804));
         let a2 = parse_admin2("GR.ESYE22.26\tLefkada\tLefkada\t258445").unwrap();
-        assert_eq!((a2.adm1.as_str(), a2.adm2.as_str(), a2.name.as_str()), ("ESYE22", "26", "Lefkada"));
+        assert_eq!(
+            (a2.adm1.as_str(), a2.adm2.as_str(), a2.name.as_str()),
+            ("ESYE22", "26", "Lefkada")
+        );
         assert!(parse_admin2("GR.ESYE22\tno second level\tx\t1").is_none());
     }
 
@@ -227,7 +236,10 @@ mod tests {
 
     #[test]
     fn feature_codes_parse() {
-        let code = parse_feature_code("P.PPLA\tseat of a first-order administrative division\tseat of ...").unwrap();
+        let code = parse_feature_code(
+            "P.PPLA\tseat of a first-order administrative division\tseat of ...",
+        )
+        .unwrap();
         assert_eq!((code.fclass.as_str(), code.fcode.as_str()), ("P", "PPLA"));
         assert!(parse_feature_code("null\tnot available\t").is_none());
     }

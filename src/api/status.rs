@@ -96,8 +96,10 @@ impl Meta {
     }
 
     fn records(&self, tables: &[(&'static str, &str)]) -> Option<HashMap<&'static str, i64>> {
-        let counts: HashMap<&'static str, i64> =
-            tables.iter().filter_map(|(label, key)| Some((*label, self.number(key)?))).collect();
+        let counts: HashMap<&'static str, i64> = tables
+            .iter()
+            .filter_map(|(label, key)| Some((*label, self.number(key)?)))
+            .collect();
         (!counts.is_empty()).then_some(counts)
     }
 }
@@ -107,10 +109,18 @@ async fn has_rows(pool: &SqlitePool, table_query: &'static str) -> Result<bool, 
 }
 
 pub async fn status(pool: &SqlitePool) -> Result<Status, ApiError> {
-    let rows = or_empty(sqlx::query("SELECT key, value FROM import_meta").fetch_all(pool).await)?;
+    let rows = or_empty(
+        sqlx::query("SELECT key, value FROM import_meta")
+            .fetch_all(pool)
+            .await,
+    )?;
     let mut values = HashMap::new();
     for row in &rows {
-        values.insert(row.try_get::<String, _>("key")?, row.try_get::<Option<String>, _>("value")?.unwrap_or_default());
+        values.insert(
+            row.try_get::<String, _>("key")?,
+            row.try_get::<Option<String>, _>("value")?
+                .unwrap_or_default(),
+        );
     }
     let meta = Meta(values);
 
@@ -122,7 +132,10 @@ pub async fn status(pool: &SqlitePool) -> Result<Status, ApiError> {
         imported: places_loaded,
         imported_at: meta.time("geonames_imported_at").filter(|_| places_loaded),
         records: meta
-            .records(&[("places", "toponyms_rows"), ("search_names", "place_names_rows")])
+            .records(&[
+                ("places", "toponyms_rows"),
+                ("search_names", "place_names_rows"),
+            ])
             .filter(|_| places_loaded),
         release: meta.text("geonames_release").filter(|_| places_loaded),
         scope: meta.text("geonames_scope").filter(|_| places_loaded),
@@ -170,7 +183,10 @@ pub async fn status(pool: &SqlitePool) -> Result<Status, ApiError> {
         message: "Welcome to GeoTimeZone",
         version: env!("CARGO_PKG_VERSION"),
         ready: places_loaded && zones_loaded,
-        sources: Sources { geonames, timezonedb },
+        sources: Sources {
+            geonames,
+            timezonedb,
+        },
         recent_imports,
     })
 }

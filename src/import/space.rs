@@ -49,7 +49,11 @@ pub fn download_peak(downloads: &[Download]) -> u64 {
     let mut peak: i64 = 0;
     for download in downloads {
         let unpacked = download.unpacked() as i64;
-        let archive = if download.is_zip { download.remote_size.unwrap_or(0) as i64 } else { 0 };
+        let archive = if download.is_zip {
+            download.remote_size.unwrap_or(0) as i64
+        } else {
+            0
+        };
         peak = peak.max(used + archive + unpacked);
         used += unpacked - download.existing as i64;
     }
@@ -72,7 +76,9 @@ pub fn with_margin(bytes: u64) -> u64 {
 /// The nearest existing directory at or above `path`, for measuring a
 /// location that has not been created yet.
 fn existing_ancestor(path: &Path) -> &Path {
-    path.ancestors().find(|p| p.is_dir()).unwrap_or(Path::new("."))
+    path.ancestors()
+        .find(|p| p.is_dir())
+        .unwrap_or(Path::new("."))
 }
 
 /// Fails with an explanation when `dir`'s filesystem has less than `needed`
@@ -83,7 +89,9 @@ pub fn require(dir: &Path, needed: u64, parts: &str) -> Result<()> {
     }
     let needed = with_margin(needed);
     // If the filesystem cannot be measured, carry on rather than block.
-    let Ok(available) = fs4::available_space(existing_ancestor(dir)) else { return Ok(()) };
+    let Ok(available) = fs4::available_space(existing_ancestor(dir)) else {
+        return Ok(());
+    };
     if available < needed {
         bail!(
             "not enough free disk space in {}: this needs about {} ({parts}) but only {} is available. \
@@ -103,7 +111,11 @@ mod tests {
     const MB: u64 = 1 << 20;
 
     fn zip(size_mb: u64, existing_mb: u64) -> Download {
-        Download { remote_size: Some(size_mb * MB), is_zip: true, existing: existing_mb * MB }
+        Download {
+            remote_size: Some(size_mb * MB),
+            is_zip: true,
+            existing: existing_mb * MB,
+        }
     }
 
     #[test]
@@ -123,9 +135,17 @@ mod tests {
 
     #[test]
     fn plain_files_and_unknown_sizes() {
-        let plain = Download { remote_size: Some(3 * MB), is_zip: false, existing: 0 };
+        let plain = Download {
+            remote_size: Some(3 * MB),
+            is_zip: false,
+            existing: 0,
+        };
         assert_eq!(download_peak(&[plain]), 3 * MB);
-        let unknown = Download { remote_size: None, is_zip: true, existing: 50 * MB };
+        let unknown = Download {
+            remote_size: None,
+            is_zip: true,
+            existing: 50 * MB,
+        };
         assert_eq!(unknown.unpacked(), 50 * MB);
         assert_eq!(download_peak(&[]), 0);
     }
@@ -147,8 +167,12 @@ mod tests {
         let here = std::env::temp_dir();
         assert!(require(&here, 0, "nothing").is_ok());
         assert!(require(&here, 1, "one byte").is_ok());
-        let error = require(&here.join("not/created/yet"), u64::MAX / 4, "far too much").unwrap_err();
+        let error =
+            require(&here.join("not/created/yet"), u64::MAX / 4, "far too much").unwrap_err();
         let text = error.to_string();
-        assert!(text.contains("not enough free disk space") && text.contains("--no-space-check"), "{text}");
+        assert!(
+            text.contains("not enough free disk space") && text.contains("--no-space-check"),
+            "{text}"
+        );
     }
 }

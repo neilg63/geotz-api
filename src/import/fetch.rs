@@ -36,13 +36,24 @@ pub struct RemoteVersion {
 
 impl RemoteVersion {
     fn from_headers(headers: &HeaderMap, size: Option<u64>) -> Self {
-        let text = |name| headers.get(name).and_then(|v| v.to_str().ok()).map(str::to_owned);
-        RemoteVersion { etag: text(ETAG), last_modified: text(LAST_MODIFIED), size, discarded: false }
+        let text = |name| {
+            headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned)
+        };
+        RemoteVersion {
+            etag: text(ETAG),
+            last_modified: text(LAST_MODIFIED),
+            size,
+            discarded: false,
+        }
     }
 
     /// Same published file, whatever has happened to the local copy.
     fn same_file(&self, other: &RemoteVersion) -> bool {
-        (&self.etag, &self.last_modified, self.size) == (&other.etag, &other.last_modified, other.size)
+        (&self.etag, &self.last_modified, self.size)
+            == (&other.etag, &other.last_modified, other.size)
     }
 
     fn modified_time(&self) -> Option<SystemTime> {
@@ -94,7 +105,11 @@ impl<'a> Fetcher<'a> {
             .user_agent(USER_AGENT)
             .connect_timeout(Duration::from_secs(30))
             .build()?;
-        Ok(Fetcher { config, client, manifest: std::sync::Mutex::new(manifest) })
+        Ok(Fetcher {
+            config,
+            client,
+            manifest: std::sync::Mutex::new(manifest),
+        })
     }
 
     pub fn save_manifest(&self) -> Result<()> {
@@ -111,7 +126,10 @@ impl<'a> Fetcher<'a> {
             return Ok(Freshness::Missing);
         }
         let url = format!("{}{}", self.config.geonames_url, source.remote);
-        let remote = self.head(&url).await.with_context(|| format!("cannot reach {url}"))?;
+        let remote = self
+            .head(&url)
+            .await
+            .with_context(|| format!("cannot reach {url}"))?;
         let current = if present {
             self.is_current(source, &target, &remote)
         } else {
@@ -125,7 +143,11 @@ impl<'a> Fetcher<'a> {
     }
 
     fn was_discarded(&self, source: &Source) -> bool {
-        self.manifest.lock().unwrap().get(&source.remote).is_some_and(|v| v.discarded)
+        self.manifest
+            .lock()
+            .unwrap()
+            .get(&source.remote)
+            .is_some_and(|v| v.discarded)
     }
 
     /// True when the local copy was discarded after import and the server
@@ -184,8 +206,12 @@ impl<'a> Fetcher<'a> {
                     Err(_) if self.was_discarded(source) => State::DiscardedCurrent,
                     Err(_) => State::Stale,
                     Ok(_) if self.config.force => State::Stale,
-                    Ok(remote) if present && self.is_current(source, &target, remote) => State::Current,
-                    Ok(remote) if !present && self.discarded_copy_is(source, remote) => State::DiscardedCurrent,
+                    Ok(remote) if present && self.is_current(source, &target, remote) => {
+                        State::Current
+                    }
+                    Ok(remote) if !present && self.discarded_copy_is(source, remote) => {
+                        State::DiscardedCurrent
+                    }
                     Ok(_) => State::Stale,
                 }
             })
@@ -211,7 +237,10 @@ impl<'a> Fetcher<'a> {
                     println!("  kept  {} (cannot check for updates: {e})", source.local);
                 }
                 (State::DiscardedCurrent, _) if !need_files => {
-                    println!("  kept  {} (unchanged; local copy discarded after import)", source.local);
+                    println!(
+                        "  kept  {} (unchanged; local copy discarded after import)",
+                        source.local
+                    );
                 }
                 (_, Ok(remote)) => {
                     self.fetch(source, remote).await?;
@@ -235,7 +264,9 @@ impl<'a> Fetcher<'a> {
         will_download: impl Fn(usize) -> bool,
     ) -> Result<()> {
         let local_size = |source: &Source| {
-            fs::metadata(self.config.local_path(&source.local)).map(|m| m.len()).unwrap_or(0)
+            fs::metadata(self.config.local_path(&source.local))
+                .map(|m| m.len())
+                .unwrap_or(0)
         };
         let mut downloads = Vec::new();
         let mut source_bytes = 0;
@@ -256,14 +287,19 @@ impl<'a> Fetcher<'a> {
             return Ok(());
         }
         let fetching = space::download_peak(&downloads);
-        let database = fs::metadata(&self.config.db_path).map(|m| m.len()).unwrap_or(0);
+        let database = fs::metadata(&self.config.db_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         let loading = space::load_allowance(source_bytes, database);
         let parts = format!(
             "{} while downloading and unpacking, {} while loading the database",
             human_size(fetching),
             human_size(loading)
         );
-        println!("  disk space needed: about {} ({parts})", human_size(space::with_margin(fetching + loading)));
+        println!(
+            "  disk space needed: about {} ({parts})",
+            human_size(space::with_margin(fetching + loading))
+        );
         space::require(&self.config.data_dir, fetching + loading, &parts)
     }
 
@@ -271,7 +307,9 @@ impl<'a> Fetcher<'a> {
     async fn fetch(&self, source: &Source, remote: RemoteVersion) -> Result<()> {
         let target = self.config.local_path(&source.local);
         let url = format!("{}{}", self.config.geonames_url, source.remote);
-        let download = self.config.local_path(&format!("{}.part", source.remote.replace('/', "_")));
+        let download = self
+            .config
+            .local_path(&format!("{}.part", source.remote.replace('/', "_")));
         let fetched = self.download(&url, &download).await?;
         if source.is_zip() {
             let (zip, member, out) = (download.clone(), source.member.clone(), target.clone());
@@ -295,8 +333,11 @@ impl<'a> Fetcher<'a> {
         for source in sources {
             let target = self.config.local_path(&source.local);
             // symlink_metadata: remove a link, not what it points at.
-            let Ok(info) = fs::symlink_metadata(&target) else { continue };
-            fs::remove_file(&target).with_context(|| format!("cannot delete {}", target.display()))?;
+            let Ok(info) = fs::symlink_metadata(&target) else {
+                continue;
+            };
+            fs::remove_file(&target)
+                .with_context(|| format!("cannot delete {}", target.display()))?;
             freed += info.len();
             if let Some(recorded) = self.manifest.lock().unwrap().get_mut(&source.remote) {
                 recorded.discarded = true;
@@ -307,7 +348,10 @@ impl<'a> Fetcher<'a> {
     }
 
     fn record(&self, source: &Source, version: RemoteVersion) {
-        self.manifest.lock().unwrap().insert(source.remote.clone(), version);
+        self.manifest
+            .lock()
+            .unwrap()
+            .insert(source.remote.clone(), version);
     }
 
     fn is_current(&self, source: &Source, target: &Path, remote: &RemoteVersion) -> bool {
@@ -398,7 +442,11 @@ pub fn human_size(bytes: u64) -> String {
         value /= 1024.0;
         unit += 1;
     }
-    if unit == 0 { format!("{bytes} B") } else { format!("{value:.1} {}", UNITS[unit]) }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 #[cfg(test)]

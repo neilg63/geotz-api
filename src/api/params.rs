@@ -76,7 +76,11 @@ fn split_strength<'a>(param: &str, text: &'a str) -> Result<(&'a str, f64), ApiE
 }
 
 fn parse_coords(param: &str, text: &str) -> Result<Coords, ApiError> {
-    let invalid = || ApiError::bad_request(format!("{param}: expected lat,lng in decimal degrees, e.g. 55.95,-3.19"));
+    let invalid = || {
+        ApiError::bad_request(format!(
+            "{param}: expected lat,lng in decimal degrees, e.g. 55.95,-3.19"
+        ))
+    };
     let mut parts = text.split(',').map(|p| p.trim().parse::<f64>());
     let lat = parts.next().and_then(Result::ok).ok_or_else(invalid)?;
     let lng = parts.next().and_then(Result::ok).ok_or_else(invalid)?;
@@ -110,14 +114,18 @@ impl Params {
 
     /// `loc` as a search preference: position and strength (0 to 1).
     pub fn proximity(&self) -> Result<Option<(Coords, f64)>, ApiError> {
-        let Some(text) = given(&self.loc) else { return Ok(None) };
+        let Some(text) = given(&self.loc) else {
+            return Ok(None);
+        };
         let (coords, strength) = split_strength("loc", text)?;
         Ok(Some((parse_coords("loc", coords)?, strength)))
     }
 
     /// Country codes to restrict to, upper-cased, with `UK` read as `GB`.
     pub fn countries(&self) -> Result<Vec<String>, ApiError> {
-        let Some(text) = given(&self.cc) else { return Ok(Vec::new()) };
+        let Some(text) = given(&self.cc) else {
+            return Ok(Vec::new());
+        };
         text.split(',')
             .map(|code| {
                 let code = code.trim().to_uppercase();
@@ -132,12 +140,15 @@ impl Params {
     }
 
     pub fn languages(&self) -> Result<Vec<LangPref>, ApiError> {
-        let Some(text) = given(&self.lang) else { return Ok(Vec::new()) };
+        let Some(text) = given(&self.lang) else {
+            return Ok(Vec::new());
+        };
         text.split(',')
             .map(|item| {
                 let (lang, strength) = split_strength("lang", item.trim())?;
                 let lang = lang.trim().split('-').next().unwrap_or("").to_lowercase();
-                if !(2..=3).contains(&lang.len()) || !lang.chars().all(|c| c.is_ascii_alphabetic()) {
+                if !(2..=3).contains(&lang.len()) || !lang.chars().all(|c| c.is_ascii_alphabetic())
+                {
                     return Err(ApiError::bad_request(format!(
                         "lang: {lang:?} is not a language code such as it or bar"
                     )));
@@ -176,7 +187,9 @@ impl Params {
             text.parse::<f64>()
                 .ok()
                 .filter(|v| v.is_finite() && *v >= 0.0)
-                .ok_or_else(|| ApiError::bad_request(format!("{param}: expected a positive number")))
+                .ok_or_else(|| {
+                    ApiError::bad_request(format!("{param}: expected a positive number"))
+                })
         };
         let km = if let Some(text) = given(&self.radius) {
             number("radius", text)?
@@ -198,10 +211,14 @@ impl Params {
             ))
         };
         if let Some(text) = given(&self.dt) {
-            return parse_datetime(text).map(When::Utc).ok_or_else(|| invalid("dt"));
+            return parse_datetime(text)
+                .map(When::Utc)
+                .ok_or_else(|| invalid("dt"));
         }
         if let Some(text) = given(&self.dtl) {
-            return parse_datetime(text).map(When::Local).ok_or_else(|| invalid("dtl"));
+            return parse_datetime(text)
+                .map(When::Local)
+                .ok_or_else(|| invalid("dtl"));
         }
         if let Some(text) = given(&self.jd) {
             return text
@@ -209,7 +226,9 @@ impl Params {
                 .ok()
                 .filter(|jd| (0.0..10_000_000.0).contains(jd))
                 .map(|jd| When::Utc(julian_day_to_unix(jd)))
-                .ok_or_else(|| ApiError::bad_request("jd: expected a Julian day number, e.g. 2459762.0"));
+                .ok_or_else(|| {
+                    ApiError::bad_request("jd: expected a Julian day number, e.g. 2459762.0")
+                });
         }
         if let Some(text) = given(&self.un) {
             return text
@@ -253,10 +272,22 @@ mod tests {
 
     #[test]
     fn only_dtl_is_local_time() {
-        assert_eq!(params(&[("dt", "2010-03-14T08:00:00")]).when().unwrap(), When::Utc(1_268_553_600));
-        assert_eq!(params(&[("dtl", "2010-03-14T08:00:00")]).when().unwrap(), When::Local(1_268_553_600));
-        assert_eq!(params(&[("un", "1268553600")]).when().unwrap(), When::Utc(1_268_553_600));
-        assert_eq!(params(&[("jd", "2459762.0")]).when().unwrap(), When::Utc(1_656_676_800));
+        assert_eq!(
+            params(&[("dt", "2010-03-14T08:00:00")]).when().unwrap(),
+            When::Utc(1_268_553_600)
+        );
+        assert_eq!(
+            params(&[("dtl", "2010-03-14T08:00:00")]).when().unwrap(),
+            When::Local(1_268_553_600)
+        );
+        assert_eq!(
+            params(&[("un", "1268553600")]).when().unwrap(),
+            When::Utc(1_268_553_600)
+        );
+        assert_eq!(
+            params(&[("jd", "2459762.0")]).when().unwrap(),
+            When::Utc(1_656_676_800)
+        );
         assert!(matches!(params(&[]).when().unwrap(), When::Utc(ts) if ts > 1_700_000_000));
     }
 
@@ -272,7 +303,10 @@ mod tests {
 
     #[test]
     fn coordinates_allow_spaces_and_reject_nonsense() {
-        let c = params(&[("loc", "55.95, -3.19")]).coords().unwrap().unwrap();
+        let c = params(&[("loc", "55.95, -3.19")])
+            .coords()
+            .unwrap()
+            .unwrap();
         assert_eq!((c.lat, c.lng), (55.95, -3.19));
         let with_alt = params(&[("loc", "43,-94,300")]).coords().unwrap().unwrap();
         assert_eq!((with_alt.lat, with_alt.lng), (43.0, -94.0));
@@ -286,12 +320,27 @@ mod tests {
     fn soft_preferences_carry_a_strength() {
         let (c, s) = params(&[("loc", "44,12:25")]).proximity().unwrap().unwrap();
         assert_eq!((c.lat, c.lng, s), (44.0, 12.0, 0.25));
-        assert_eq!(params(&[("loc", "44,12")]).proximity().unwrap().unwrap().1, 0.5);
-        assert_eq!(params(&[("loc", "44,12:900")]).proximity().unwrap().unwrap().1, 1.0);
+        assert_eq!(
+            params(&[("loc", "44,12")]).proximity().unwrap().unwrap().1,
+            0.5
+        );
+        assert_eq!(
+            params(&[("loc", "44,12:900")])
+                .proximity()
+                .unwrap()
+                .unwrap()
+                .1,
+            1.0
+        );
         assert!(params(&[("loc", "44,12:lots")]).proximity().is_err());
 
-        let langs = params(&[("lang", "it:60, en:30,bar,de-CH")]).languages().unwrap();
-        let pairs: Vec<(&str, f64)> = langs.iter().map(|l| (l.lang.as_str(), l.strength)).collect();
+        let langs = params(&[("lang", "it:60, en:30,bar,de-CH")])
+            .languages()
+            .unwrap();
+        let pairs: Vec<(&str, f64)> = langs
+            .iter()
+            .map(|l| (l.lang.as_str(), l.strength))
+            .collect();
         assert_eq!(pairs, [("it", 0.6), ("en", 0.3), ("bar", 0.5), ("de", 0.5)]);
         assert!(params(&[("lang", "italian")]).languages().is_err());
         assert!(params(&[("lang", "it:x")]).languages().is_err());
@@ -299,7 +348,10 @@ mod tests {
 
     #[test]
     fn country_codes_are_normalised() {
-        assert_eq!(params(&[("cc", "it, ch")]).countries().unwrap(), ["IT", "CH"]);
+        assert_eq!(
+            params(&[("cc", "it, ch")]).countries().unwrap(),
+            ["IT", "CH"]
+        );
         assert_eq!(params(&[("cc", "uk")]).countries().unwrap(), ["GB"]);
         assert!(params(&[("cc", "ITA")]).countries().is_err());
         assert!(params(&[]).countries().unwrap().is_empty());
@@ -318,7 +370,10 @@ mod tests {
         assert_eq!(params(&[("radius", "30")]).radius_km().unwrap(), 30.0);
         assert_eq!(params(&[("fuzzy", "1")]).radius_km().unwrap(), 111.2);
         assert_eq!(params(&[("radius", "9000")]).radius_km().unwrap(), 500.0);
-        assert_eq!(params(&[("q", " Monac "), ("place", "x")]).query(), Some("Monac"));
+        assert_eq!(
+            params(&[("q", " Monac "), ("place", "x")]).query(),
+            Some("Monac")
+        );
         assert_eq!(params(&[("place", "Edinburgh")]).query(), Some("Edinburgh"));
     }
 }

@@ -95,21 +95,40 @@ pub struct SearchBox {
 
 pub fn search_box(centre: Coords, radius_km: f64) -> SearchBox {
     let dlat = radius_km / KM_PER_DEGREE;
-    let lat = ((centre.lat - dlat).max(-90.0), (centre.lat + dlat).min(90.0));
+    let lat = (
+        (centre.lat - dlat).max(-90.0),
+        (centre.lat + dlat).min(90.0),
+    );
     // A degree of longitude shrinks with latitude; widen the box to match.
     let widest_lat = lat.0.abs().max(lat.1.abs());
     let shrink = widest_lat.to_radians().cos();
     if shrink < 0.01 || dlat / shrink >= 180.0 {
-        return SearchBox { lat, lng: (-180.0, 180.0), lng_wrapped: None };
+        return SearchBox {
+            lat,
+            lng: (-180.0, 180.0),
+            lng_wrapped: None,
+        };
     }
     let dlng = dlat / shrink;
     let (west, east) = (centre.lng - dlng, centre.lng + dlng);
     if west < -180.0 {
-        SearchBox { lat, lng: (-180.0, east), lng_wrapped: Some((west + 360.0, 180.0)) }
+        SearchBox {
+            lat,
+            lng: (-180.0, east),
+            lng_wrapped: Some((west + 360.0, 180.0)),
+        }
     } else if east > 180.0 {
-        SearchBox { lat, lng: (west, 180.0), lng_wrapped: Some((-180.0, east - 360.0)) }
+        SearchBox {
+            lat,
+            lng: (west, 180.0),
+            lng_wrapped: Some((-180.0, east - 360.0)),
+        }
     } else {
-        SearchBox { lat, lng: (west, east), lng_wrapped: None }
+        SearchBox {
+            lat,
+            lng: (west, east),
+            lng_wrapped: None,
+        }
     }
 }
 
@@ -154,7 +173,13 @@ pub async fn nearest_within(
     let mut best: Option<(Place, f64)> = None;
     for row in &rows {
         let place = Place::from_row(row)?;
-        let distance = distance_km(centre, Coords { lat: place.lat, lng: place.lng });
+        let distance = distance_km(
+            centre,
+            Coords {
+                lat: place.lat,
+                lng: place.lng,
+            },
+        );
         if distance <= radius_km && best.as_ref().is_none_or(|(_, d)| distance < *d) {
             best = Some((place, distance));
         }
@@ -175,22 +200,31 @@ pub async fn locate(pool: &SqlitePool, centre: Coords) -> Result<Option<(Place, 
 }
 
 pub async fn country_name(pool: &SqlitePool, cc: &str) -> Result<Option<String>, ApiError> {
-    Ok(sqlx::query_scalar("SELECT country_name FROM countries WHERE country_code = ?")
-        .bind(cc)
-        .fetch_optional(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar("SELECT country_name FROM countries WHERE country_code = ?")
+            .bind(cc)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 // --------------------------------------------------------------- name search
 
 /// Lower-cases and removes accents: `München` -> `munchen`.
 pub fn fold(text: &str) -> String {
-    text.nfd().filter(|c| !is_combining_mark(*c)).flat_map(char::to_lowercase).collect()
+    text.nfd()
+        .filter(|c| !is_combining_mark(*c))
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 /// Words of a name or query, folded.
 fn words(text: &str) -> Vec<String> {
-    fold(text).split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_owned).collect()
+    fold(text)
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Builds the full-text query: every word must start a word of the name.
@@ -200,7 +234,13 @@ pub fn match_expression(query: &str) -> Option<String> {
     if tokens.iter().map(|t| t.chars().count()).sum::<usize>() < 2 {
         return None;
     }
-    Some(tokens.iter().map(|t| format!("\"{t}\"*")).collect::<Vec<_>>().join(" "))
+    Some(
+        tokens
+            .iter()
+            .map(|t| format!("\"{t}\"*"))
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
 }
 
 /// How well the query fits a name, from 0 to 1, judged on the first query
@@ -209,7 +249,9 @@ pub fn match_expression(query: &str) -> Option<String> {
 /// first word (`lond` against `East London`).
 fn closeness(query_words: &[String], name: &str) -> f64 {
     const LATER_WORD: f64 = 0.6;
-    let Some(first) = query_words.first() else { return 0.0 };
+    let Some(first) = query_words.first() else {
+        return 0.0;
+    };
     let typed = first.chars().count() as f64;
     words(name)
         .iter()
@@ -217,7 +259,11 @@ fn closeness(query_words: &[String], name: &str) -> f64 {
         .filter(|(_, word)| word.starts_with(first.as_str()))
         .map(|(position, word)| {
             let share = typed / word.chars().count() as f64;
-            if position == 0 { share } else { share * LATER_WORD }
+            if position == 0 {
+                share
+            } else {
+                share * LATER_WORD
+            }
         })
         .fold(0.2, f64::max)
 }
@@ -286,8 +332,14 @@ fn score(
 }
 
 /// Finds places whose names start with the query words, best first.
-pub async fn search(pool: &SqlitePool, query: &str, options: &SearchOptions) -> Result<Vec<Match>, ApiError> {
-    let Some(expression) = match_expression(query) else { return Ok(Vec::new()) };
+pub async fn search(
+    pool: &SqlitePool,
+    query: &str,
+    options: &SearchOptions,
+) -> Result<Vec<Match>, ApiError> {
+    let Some(expression) = match_expression(query) else {
+        return Ok(Vec::new());
+    };
     let query_words = words(query);
 
     let mut sql: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
@@ -298,7 +350,11 @@ pub async fn search(pool: &SqlitePool, query: &str, options: &SearchOptions) -> 
          WHERE place_names_fts MATCH "
     ));
     sql.push_bind(expression);
-    sql.push(if options.include_admin { " AND t.fclass IN ('P', 'A')" } else { " AND t.fclass = 'P'" });
+    sql.push(if options.include_admin {
+        " AND t.fclass IN ('P', 'A')"
+    } else {
+        " AND t.fclass = 'P'"
+    });
     if !options.countries.is_empty() {
         sql.push(" AND t.cc IN (");
         let mut list = sql.separated(", ");
@@ -330,9 +386,15 @@ pub async fn search(pool: &SqlitePool, query: &str, options: &SearchOptions) -> 
         let matched: String = row.try_get("matched")?;
         let langs: Option<String> = row.try_get("langs")?;
         let weight: i64 = row.try_get("weight")?;
-        let distance = options
-            .proximity
-            .map(|(centre, _)| distance_km(centre, Coords { lat: place.lat, lng: place.lng }));
+        let distance = options.proximity.map(|(centre, _)| {
+            distance_km(
+                centre,
+                Coords {
+                    lat: place.lat,
+                    lng: place.lng,
+                },
+            )
+        });
         let score = score(
             weight,
             langs.as_deref(),
@@ -343,15 +405,30 @@ pub async fn search(pool: &SqlitePool, query: &str, options: &SearchOptions) -> 
         );
         match best.get_mut(&place.id) {
             Some(existing) if existing.score >= score => {}
-            Some(existing) => *existing = Match { place, matched, score },
+            Some(existing) => {
+                *existing = Match {
+                    place,
+                    matched,
+                    score,
+                }
+            }
             None => {
-                best.insert(place.id, Match { place, matched, score });
+                best.insert(
+                    place.id,
+                    Match {
+                        place,
+                        matched,
+                        score,
+                    },
+                );
             }
         }
     }
     let mut matches: Vec<Match> = best.into_values().collect();
     matches.sort_by(|a, b| {
-        b.score.total_cmp(&a.score).then_with(|| b.place.population.cmp(&a.place.population))
+        b.score
+            .total_cmp(&a.score)
+            .then_with(|| b.place.population.cmp(&a.place.population))
     });
     matches.truncate(options.max.max(1));
     Ok(matches)
@@ -403,9 +480,18 @@ mod tests {
         assert_eq!(fold("München"), "munchen");
         assert_eq!(fold("Hà Nội"), "ha noi");
         assert_eq!(match_expression("Monac").as_deref(), Some("\"monac\"*"));
-        assert_eq!(match_expression(" San  Fr ").as_deref(), Some("\"san\"* \"fr\"*"));
-        assert_eq!(match_expression("Saint-Étienne").as_deref(), Some("\"saint\"* \"etienne\"*"));
-        assert_eq!(match_expression("O'Fallon \"x\" OR *").as_deref(), Some("\"o\"* \"fallon\"* \"x\"* \"or\"*"));
+        assert_eq!(
+            match_expression(" San  Fr ").as_deref(),
+            Some("\"san\"* \"fr\"*")
+        );
+        assert_eq!(
+            match_expression("Saint-Étienne").as_deref(),
+            Some("\"saint\"* \"etienne\"*")
+        );
+        assert_eq!(
+            match_expression("O'Fallon \"x\" OR *").as_deref(),
+            Some("\"o\"* \"fallon\"* \"x\"* \"or\"*")
+        );
         assert_eq!(match_expression("m"), None);
         assert_eq!(match_expression("  -- "), None);
     }
@@ -423,7 +509,13 @@ mod tests {
 
     fn options(lang: Option<(&str, f64)>, proximity: Option<f64>) -> SearchOptions {
         SearchOptions {
-            languages: lang.map(|(l, s)| LangPref { lang: l.into(), strength: s }).into_iter().collect(),
+            languages: lang
+                .map(|(l, s)| LangPref {
+                    lang: l.into(),
+                    strength: s,
+                })
+                .into_iter()
+                .collect(),
             proximity: proximity.map(|s| (at(0.0, 0.0), s)),
             max: 10,
             ..Default::default()
@@ -440,10 +532,16 @@ mod tests {
         let italian = options(Some(("it", 0.5)), None);
         assert!(munich(&italian) > monaco(&italian));
         let faint = options(Some(("it", 0.1)), None);
-        assert!(monaco(&faint) > munich(&faint), "a weak preference only narrows the gap");
+        assert!(
+            monaco(&faint) > munich(&faint),
+            "a weak preference only narrows the gap"
+        );
         assert!(munich(&faint) > munich(&neutral));
         let german = options(Some(("de", 0.5)), None);
-        assert!(monaco(&german) > munich(&german), "other languages do not lift the Italian name");
+        assert!(
+            monaco(&german) > munich(&german),
+            "other languages do not lift the Italian name"
+        );
     }
 
     #[test]
