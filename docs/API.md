@@ -99,7 +99,21 @@ Used by `/timezone`, `/geotz` and `/geotime`. The first one present is used.
 | `un` | Unix timestamp in seconds (UTC) |
 | none | Now |
 
-Date-times are `YYYY-MM-DD` optionally followed by `T` or a space and `HH`, `HH:MM` or `HH:MM:SS`. Anything else is a 400 error.
+Date-times are ISO 8601, `YYYY-MM-DDTHH:MM:SS`, and may be incomplete. A space may replace the `T`, single digits need no leading zero, and a trailing `Z` or fraction of a second is ignored.
+
+| Given | Read as |
+| --- | --- |
+| `2016-03-27T12:30` | `2016-03-27T12:30:00` |
+| `2016-03-27T12` | `2016-03-27T12:00:00` |
+| `2016-03-27T00` | `2016-03-27T00:00:00` |
+| `2016-03-27` | `2016-03-27T12:00:00` |
+| `2016-03` | `2016-03-01T12:00:00` |
+| `2016` | `2016-01-01T12:00:00` |
+
+- Missing minutes and seconds are zero; a missing month or day is the first.
+- A date with no time is read as **noon**, not midnight. Clocks change in the small hours, so noon gives the offset in force for most of that day, even on the day summer time starts or ends. Give `T00` for midnight.
+
+A UTC offset such as `+02:00` is not applied: `dt` is always UTC and `dtl` always local time at the place. Anything that is not a date in year-month-day order, or names an impossible date or time, is a 400 error.
 
 ### How `dtl` is resolved
 
@@ -116,7 +130,7 @@ Date-times are `YYYY-MM-DD` optionally followed by `T` or a space and `HH`, `HH:
 
 - A reading skipped when clocks go forward is taken on the offset in force before the change, so it lands the same distance after the change.
 - A reading repeated when clocks go back means the first occurrence unless `dst=0`. `dst` has no effect at any other time.
-- `dtl` works the same way with `zn`, `loc` and `place`.
+- `dtl` works the same way with `zone_name`, `loc` and `place`.
 
 ## Location parameters
 
@@ -124,9 +138,13 @@ Used by `/timezone`, `/geotz` and `/geotime`. The first that applies is used.
 
 | Param | Meaning |
 | --- | --- |
-| `zn` | Zone name such as `Europe/London` (`/timezone` only) |
+| `zone_name` | Zone name such as `Europe/London` (`/timezone` only). Also accepted as `zn`, `zoneName` or `zonename`. |
 | `loc` | `lat,lng` in decimal degrees; spaces and a third value (altitude) are allowed |
 | `place` or `q` | Place name, resolved with the same search as `/lookup`; `cc` and `reg` narrow it |
+
+The four spellings of `zone_name` are interchangeable and always accepted: the `--camel-case` setting changes only the keys of the JSON output, never the names of query parameters.
+
+A recognised `zone_name` is answered directly from the offset history: no place search is made, and `loc`, `place`, `cc` and `reg` are ignored. Letter case does not matter and a space is read as an underscore, so `europe/london` and `America/New York` are accepted. If the name is not recognised, `loc` or `place` is used when given; otherwise the response is a 404.
 
 With `loc`, the zone is that of the nearest town or village, searched within 25 km, then 100 km, then 300 km; failing that, any feature with a time zone within 300 km. Beyond that the position is treated as open sea.
 
@@ -150,13 +168,24 @@ Returned by `/timezone` and as `time` in `/geotz` and `/geotime`.
 Dates before a zone's first record:
 
 - With a position: `SOL` (solar time to the second) before 1900, `LOC` (whole-hour zone by longitude) from 1900.
-- With `zn` only: the zone's first record, local mean time, is extended backwards.
+- With `zone_name` only: the zone's first record, local mean time, is extended backwards.
 
 ## GET /timezone
+
+By zone name, with `dt`, `dtl`, `jd` or `un`, or none of them for the current time:
+
+```
+GET /timezone?zone_name=America/Chicago&dtl=2010-03-14T03:00:00
+GET /timezone?zn=Europe/London
+```
+
+By position or place name:
 
 ```
 GET /timezone?loc=43,-94&dtl=2010-03-14T03:00:00
 ```
+
+The response has the same shape either way, except that `solar_utc_offset` is only present when a position is known:
 
 ```json
 {

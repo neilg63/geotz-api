@@ -395,11 +395,17 @@ async fn welcome(State(pool): State<SqlitePool>) -> ApiResult {
 async fn timezone(State(pool): State<SqlitePool>, Query(params): Query<Params>) -> ApiResult {
     let when = params.when()?;
     let first = params.first_occurrence()?;
-    if let Some(zone) = params.zone() {
-        return match time::zone_time(&pool, zone, when, None, first).await? {
-            Some(found) => to_json(found),
-            None => Err(ApiError::not_found(format!("unknown time zone {zone:?}"))),
-        };
+    // A recognised zone name settles the question without any place search.
+    if let Some(asked) = params.zone() {
+        if let Some(zone) = time::known_zone(&pool, asked).await?
+            && let Some(found) = time::zone_time(&pool, &zone, when, None, first).await?
+        {
+            return to_json(found);
+        }
+        // An unrecognised name is only an error if there is nothing else to go on.
+        if params.coords()?.is_none() && params.query().is_none() {
+            return Err(ApiError::not_found(format!("unknown time zone {asked:?}")));
+        }
     }
     let located = locate(&pool, &params).await?;
     to_json(time_at(&pool, &located, when, first).await?)

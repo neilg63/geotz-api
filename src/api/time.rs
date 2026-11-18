@@ -4,7 +4,7 @@
 //! held in the same form, i.e. the Unix timestamp that would show that clock
 //! reading in UTC.
 
-use chrono::{DateTime, Datelike, NaiveDate};
+use chrono::{DateTime, Datelike};
 use julian_day_converter::{julian_day_to_unixtime, unixtime_to_julian_day};
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
@@ -20,32 +20,22 @@ pub enum When {
     Local(i64),
 }
 
-/// Parses `YYYY-MM-DD`, optionally followed by `T` or a space and
-/// `HH`, `HH:MM` or `HH:MM:SS`. Missing parts are zero. A trailing `Z` is
-/// accepted. Returns the reading as Unix seconds.
+/// Parses an ISO 8601 date-time that may be incomplete; see
+/// [`fuzzy_datetime`]. A missing month or day is the first, and missing
+/// minutes or seconds are zero, so `2016-03-27T12` is noon exactly.
+///
+/// A date with no time at all is read as noon rather than midnight: clocks
+/// change in the small hours, so noon gives the offset that applies to most
+/// of that day even on the day of a change. Returns the reading as Unix
+/// seconds.
 pub fn parse_datetime(text: &str) -> Option<i64> {
-    let text = text.trim().trim_end_matches(['Z', 'z']);
-    let (date, time) = match text.split_once(['T', 't', ' ']) {
-        Some((date, time)) => (date, time.trim()),
-        None => (text, ""),
-    };
-    let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
-    let mut parts = [0u32; 3];
-    if !time.is_empty() {
-        let mut fields = time.split(':');
-        for part in parts.iter_mut() {
-            match fields.next() {
-                // Fractions of a second are dropped.
-                Some(field) => *part = field.split('.').next()?.parse().ok()?,
-                None => break,
-            }
-        }
-        if fields.next().is_some() {
-            return None;
-        }
-    }
-    let datetime = date.and_hms_opt(parts[0], parts[1], parts[2])?;
-    Some(datetime.and_utc().timestamp())
+    const NOON: i64 = 12 * 3600;
+    let text = text.trim();
+    let datetime = fuzzy_datetime::iso_fuzzy_string_to_datetime(text).ok()?;
+    let has_time = text
+        .split_once(['T', 't', ' '])
+        .is_some_and(|(_, time)| time.contains(|c: char| c.is_ascii_digit()));
+    Some(datetime.and_utc().timestamp() + if has_time { 0 } else { NOON })
 }
 
 /// Formats Unix seconds as `YYYY-MM-DDTHH:MM:SS`.
@@ -324,6 +314,30 @@ async fn period_at(
     ))
 }
 
+/// The stored spelling of a zone name, or `None` if it is not in the
+/// database. Letter case is ignored and spaces are read as underscores, so
+/// `europe/london` and `America/New York` are both recognised.
+pub async fn known_zone(pool: &SqlitePool, name: &str) -> Result<Option<String>, ApiError> {
+    let name = name.trim().replace(' ', "_");
+    let exact = sqlx::query("SELECT zone_name FROM time_zones WHERE zone_name = ? LIMIT 1")
+        .bind(&name)
+        .fetch_optional(pool)
+        .await?;
+    let row = match exact {
+        Some(row) => Some(row),
+        // Only a misspelt case reaches this slower scan of the zone names.
+        None => {
+            sqlx::query(
+                "SELECT zone_name FROM time_zones WHERE zone_name = ? COLLATE NOCASE LIMIT 1",
+            )
+            .bind(&name)
+            .fetch_optional(pool)
+            .await?
+        }
+    };
+    Ok(row.map(|row| row.try_get("zone_name")).transpose()?)
+}
+
 /// Looks up the offset for `zone` at `when`.
 ///
 /// `lng`, when known, adds the solar offset and allows a longitude-based
@@ -424,7 +438,8 @@ mod tests {
 
     #[test]
     fn dates_parse_with_optional_parts() {
-        assert_eq!(parse_datetime("1970-01-01"), Some(0));
+        assert_eq!(parse_datetime("1970-01-01"), Some(43_200));
+        assert_eq!(parse_datetime("1970-01-01T00"), Some(0));
         assert_eq!(parse_datetime("1970-01-02T00:00:01"), Some(86_401));
         assert_eq!(parse_datetime("2010-03-14 08:00"), Some(1_268_553_600));
         assert_eq!(parse_datetime("2010-03-14T08"), Some(1_268_553_600));
@@ -433,13 +448,44 @@ mod tests {
             Some(1_268_553_600)
         );
         assert_eq!(parse_datetime("1890-01-01T12:00:00"), Some(-2_524_478_400));
+        // A date alone is noon; any time given is completed with zeros.
+        assert_eq!(
+            parse_datetime("2016-03-27").map(format_datetime).as_deref(),
+            Some("2016-03-27T12:00:00")
+        );
+        assert_eq!(
+            parse_datetime("2016-03-27T12")
+                .map(format_datetime)
+                .as_deref(),
+            Some("2016-03-27T12:00:00")
+        );
+        assert_eq!(
+            parse_datetime("2016-03").map(format_datetime).as_deref(),
+            Some("2016-03-01T12:00:00")
+        );
+        assert_eq!(
+            parse_datetime("2016").map(format_datetime).as_deref(),
+            Some("2016-01-01T12:00:00")
+        );
+        assert_eq!(
+            parse_datetime("2016-03-27T0")
+                .map(format_datetime)
+                .as_deref(),
+            Some("2016-03-27T00:00:00")
+        );
+        assert_eq!(
+            parse_datetime("2016-3-27T8:5")
+                .map(format_datetime)
+                .as_deref(),
+            Some("2016-03-27T08:05:00")
+        );
         for bad in [
             "",
-            "2010",
             "2010-13-01",
             "2010-02-30",
             "2010-03-14T25:00",
-            "2010-03-14T08:00:00:00",
+            "2010-03-14T08:61",
+            "14/03/2010",
             "yesterday",
         ] {
             assert_eq!(parse_datetime(bad), None, "{bad}");

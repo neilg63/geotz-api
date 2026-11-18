@@ -20,6 +20,7 @@ clap = { version = "4.6.7", features = ["derive", "env"] }
 dotenvy = "0.15.7"
 fs4 = "1.1.0"
 futures-util = "0.3.34"
+fuzzy-datetime = "0.1.5"
 httpdate = "1.0.3"
 julian_day_converter = "0.4.6"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "stream"] }

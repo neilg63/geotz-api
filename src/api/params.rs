@@ -21,7 +21,9 @@ pub struct Params {
     pub jd: Option<String>,
     /// Unix timestamp (UTC).
     pub un: Option<String>,
-    /// IANA zone name.
+    /// IANA zone name; `zn` is the short spelling.
+    #[serde(alias = "zoneName", alias = "zonename")]
+    pub zone_name: Option<String>,
     pub zn: Option<String>,
     /// `lat,lng`, optionally `:strength` where it is a search preference.
     pub loc: Option<String>,
@@ -99,8 +101,9 @@ impl Params {
         given(&self.q).or_else(|| given(&self.place))
     }
 
+    /// The zone name asked for: `zone_name`, or `zn` for short.
     pub fn zone(&self) -> Option<&str> {
-        given(&self.zn)
+        given(&self.zone_name).or_else(|| given(&self.zn))
     }
 
     pub fn region(&self) -> Option<&str> {
@@ -293,8 +296,9 @@ mod tests {
 
     #[test]
     fn dt_takes_precedence_and_bad_dates_are_errors() {
+        // A date with no time is read as noon.
         let both = params(&[("dt", "2010-03-14"), ("dtl", "2011-01-01"), ("un", "5")]);
-        assert_eq!(both.when().unwrap(), When::Utc(1_268_524_800));
+        assert_eq!(both.when().unwrap(), When::Utc(1_268_568_000));
         assert!(params(&[("dt", "tomorrow")]).when().is_err());
         assert!(params(&[("dtl", "2010-02-30")]).when().is_err());
         assert!(params(&[("un", "12.5")]).when().is_err());
