@@ -42,6 +42,9 @@ pub struct Place {
     /// Set by [`search`] when the region is just another name for the place
     /// itself, as `Ciudad de México` is for Mexico City.
     pub region_is_own_name: bool,
+    /// Set by [`search`]: the region's conventional short name, such as
+    /// `Jakarta` for `Daerah Khusus Ibukota Jakarta`.
+    pub short_region: Option<String>,
 }
 
 impl Place {
@@ -60,6 +63,7 @@ impl Place {
             admin_name: row.try_get("admin_name")?,
             region: row.try_get("region")?,
             region_is_own_name: false,
+            short_region: None,
         })
     }
 
@@ -68,8 +72,9 @@ impl Place {
     pub fn label(&self) -> String {
         let mut text = self.name.clone();
         let region = self
-            .region
+            .short_region
             .as_deref()
+            .or(self.region.as_deref())
             .filter(|_| !self.region_is_own_name)
             .and_then(|region| super::tidy::region_for_label(&self.name, region));
         if let Some(region) = region {
@@ -302,9 +307,18 @@ pub struct Match {
     pub score: f64,
 }
 
-/// Flags the results whose region is one of the place's own names, perhaps
-/// in another language, so that labels do not say the same thing twice:
-/// `Mexico City` in `Ciudad de México`, `Vienna` in `Wien`.
+/// Prepares the results' regions for labels, from data the importer
+/// already stores.
+///
+/// * `short_region` is the region's conventional short name from the
+///   GeoNames region codes: `Jakarta` for `Daerah Khusus Ibukota Jakarta`,
+///   `Maharashtra` for `State of Mahārāshtra`.
+/// * `region_is_own_name` is set when the region is named after the place
+///   itself, so that a label does not say the same thing twice. Either the
+///   region is one of the place's own names (`Mexico City` in `Ciudad de
+///   México`), or one of the region's names is the place's (`Moscow` in
+///   `Moskva`, also known as Moscow). A region that is a separate entity
+///   shares no name with its city and is kept: `Munich` in `Bavaria`.
 async fn mark_regions_named_for_the_place(
     pool: &SqlitePool,
     matches: &mut [Match],
@@ -317,28 +331,53 @@ async fn mark_regions_named_for_the_place(
     if with_region.is_empty() {
         return Ok(());
     }
-    let mut sql: QueryBuilder<Sqlite> =
-        QueryBuilder::new("SELECT pl_id, name FROM place_names WHERE pl_id IN (");
-    let mut ids = sql.separated(", ");
-    for id in &with_region {
-        ids.push_bind(*id);
+    // Each place's names, its region's names, and its region's short name.
+    let sources = [
+        "SELECT pl_id, name FROM place_names WHERE pl_id IN (",
+        "SELECT t.pl_id, n.name FROM toponyms t
+         JOIN admin1_codes a ON a.cc = t.cc AND a.adm1 = t.adm1
+         JOIN place_names n ON n.pl_id = a.geoname_id
+         WHERE t.pl_id IN (",
+        "SELECT t.pl_id, a.name FROM toponyms t
+         JOIN admin1_codes a ON a.cc = t.cc AND a.adm1 = t.adm1
+         WHERE t.pl_id IN (",
+    ];
+    let mut names: [HashMap<i64, Vec<String>>; 3] = Default::default();
+    for (source, found) in sources.into_iter().zip(names.iter_mut()) {
+        let mut sql: QueryBuilder<Sqlite> = QueryBuilder::new(source);
+        let mut ids = sql.separated(", ");
+        for id in &with_region {
+            ids.push_bind(*id);
+        }
+        sql.push(")");
+        for row in sql.build().fetch_all(pool).await? {
+            found
+                .entry(row.try_get("pl_id")?)
+                .or_default()
+                .push(row.try_get("name")?);
+        }
     }
-    sql.push(")");
-    let mut names: HashMap<i64, Vec<String>> = HashMap::new();
-    for row in sql.build().fetch_all(pool).await? {
-        names
-            .entry(row.try_get("pl_id")?)
-            .or_default()
-            .push(row.try_get("name")?);
-    }
+    let [own_names, region_names, mut short_names] = names;
+    let none = Vec::new();
     for found in matches.iter_mut() {
         let place = &mut found.place;
-        let (Some(region), Some(own)) = (place.region.as_deref(), names.get(&place.id)) else {
+        let Some(region) = place.region.as_deref() else {
             continue;
         };
+        place.short_region = short_names
+            .remove(&place.id)
+            .and_then(|mut names| names.pop())
+            .filter(|n| !n.is_empty());
+        let own = own_names.get(&place.id).unwrap_or(&none);
+        let of_region = region_names.get(&place.id).unwrap_or(&none);
+        let aliases = of_region.iter().chain(place.short_region.iter());
         place.region_is_own_name = own
             .iter()
-            .any(|name| super::tidy::named_after(region, name));
+            .any(|name| super::tidy::named_after(region, name))
+            || aliases.into_iter().any(|alias| {
+                super::tidy::named_after(alias, &place.name)
+                    || own.iter().any(|name| super::tidy::named_after(alias, name))
+            });
     }
     Ok(())
 }
@@ -624,6 +663,7 @@ mod tests {
             admin_name: None,
             region: Some("Scotland".into()),
             region_is_own_name: false,
+            short_region: None,
         };
         assert_eq!(place.label(), "Edinburgh, Scotland (GB)");
         place.region = Some("Edinburgh".into());

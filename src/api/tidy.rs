@@ -10,6 +10,12 @@ use super::places::{Match, Place, distance_km, fold, words};
 /// Results closer than this to a related, more important result are dropped.
 pub const OVERLAP_KM: f64 = 10.0;
 
+/// Districts and other lesser places give way to a city of at least
+/// [`METROPOLIS`] people out to this distance, since such a city extends
+/// well beyond 10 km: Köpenick is 12 km from the centre of Berlin.
+pub const METROPOLIS_KM: f64 = 25.0;
+pub const METROPOLIS: i64 = 1_000_000;
+
 /// Words that say what kind of division a region is, as they appear before
 /// its name: "State of ...", "Departamento de ...", "Changwat ...".
 const KINDS: &[&str] = &[
@@ -42,6 +48,7 @@ const KINDS: &[&str] = &[
     "provincie",
     "kanton",
     "gobolka",
+    "land",
     "city",
 ];
 
@@ -181,28 +188,35 @@ struct Member {
     region: Option<String>,
     /// Index of the group's leading place in `names`.
     leader: usize,
+    /// Whether this member is itself the leader, and a metropolis.
+    metropolis: bool,
 }
 
 /// Removes results that overlap a more important one.
 ///
 /// Results are grouped around the most important place: a result joins a
 /// group when it lies within [`OVERLAP_KM`] of one of its members, in the
-/// same country and region, and its name and the leader's contain one
-/// another. Only the leader of each group is kept, except that a national
-/// capital is always kept. Importance is by kind of place (see [`tier`]),
+/// same country and region, and its name (or the name the query matched)
+/// and the leader's contain one another. Around a leader of a million
+/// people or more, lesser places (not towns or cities) join from up to
+/// [`METROPOLIS_KM`]. Only the leader of each group is kept, except that a
+/// national capital is always kept. Importance is by kind of place (see [`tier`]),
 /// then population. The order of the results is not changed.
 pub fn without_overlaps(matches: Vec<Match>) -> Vec<Match> {
     if matches.len() < 2 {
         return matches;
     }
     let names: Vec<Vec<String>> = matches.iter().map(|m| words(&m.place.name)).collect();
+    // The name the query matched, where that is not the place's main name:
+    // a district of Berlin found through its other name "Berlin-Mitte".
+    let matched: Vec<Vec<String>> = matches.iter().map(|m| words(&m.matched)).collect();
     let mut order: Vec<usize> = (0..matches.len()).collect();
     order.sort_by_key(|&i| {
         let place = &matches[i].place;
         (tier(place), std::cmp::Reverse(place.population), place.id)
     });
 
-    let lat_reach = OVERLAP_KM / 111.0;
+    let lat_reach = METROPOLIS_KM / 111.0;
     let mut by_country: HashMap<&str, Vec<Member>> = HashMap::new();
     let mut keep = vec![true; matches.len()];
     for &i in &order {
@@ -215,13 +229,29 @@ pub fn without_overlaps(matches: Vec<Match>) -> Vec<Match> {
         let members = by_country
             .entry(place.cc.as_deref().unwrap_or(""))
             .or_default();
+        // A "section" as large as Navi Mumbai is a city in its own right.
+        let lesser = tier(place) > 0 && place.population < METROPOLIS;
+        let is_town = tier(place) == 0;
         let leader = members
             .iter()
             .find(|member| {
                 (member.coords.lat - coords.lat).abs() <= lat_reach
                     && (member.region.is_none() || region.is_none() || member.region == region)
-                    && related(&names[i], &names[member.leader])
-                    && distance_km(member.coords, coords) < OVERLAP_KM
+                    // Two distinct towns stay separate however close they
+                    // are. A town only gives way to a namesake, which is
+                    // the same place listed twice, or to a metropolis that
+                    // has absorbed it.
+                    && (!is_town
+                        || names[i] == names[member.leader]
+                        || matches[member.leader].place.population >= METROPOLIS)
+                    && (related(&names[i], &names[member.leader])
+                        || related(&matched[i], &names[member.leader]))
+                    && distance_km(member.coords, coords)
+                        < if member.metropolis && lesser {
+                            METROPOLIS_KM
+                        } else {
+                            OVERLAP_KM
+                        }
             })
             .map(|member| member.leader);
         if leader.is_some() && place.fcode.as_deref() != Some("PPLC") {
@@ -231,6 +261,7 @@ pub fn without_overlaps(matches: Vec<Match>) -> Vec<Match> {
             coords,
             region,
             leader: leader.unwrap_or(i),
+            metropolis: leader.is_none() && place.population >= METROPOLIS,
         });
     }
     let mut keep = keep.into_iter();
@@ -324,6 +355,7 @@ mod tests {
                 admin_name: None,
                 region: Some(region.into()),
                 region_is_own_name: false,
+                short_region: None,
             },
             matched: name.into(),
             score: 0.0,
@@ -357,6 +389,20 @@ mod tests {
             names,
             ["Delhi", "New Delhi", "Delhi", "Shahdara", "Delhi Road"]
         );
+    }
+
+    #[test]
+    fn distinct_towns_stay_separate_however_close() {
+        // About 5 km apart, with related names, but two settlements.
+        let names = kept(vec![
+            place(1, "Brighton", "PPL", 140_000, 28.60, 77.20, "x"),
+            place(2, "New Brighton", "PPL", 15_000, 28.64, 77.22, "x"),
+            // The same town listed twice.
+            place(3, "Brighton", "PPL", 300, 28.61, 77.21, "x"),
+            // Not a settlement: a district of the first.
+            place(4, "Brighton Centre", "PPLX", 9_000, 28.60, 77.21, "x"),
+        ]);
+        assert_eq!(names, ["Brighton", "New Brighton"]);
     }
 
     #[test]

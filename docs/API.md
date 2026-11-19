@@ -279,33 +279,37 @@ Ranking combines how expected the matched name is for the place, the logarithm o
 
 ### Overlapping results
 
-All three endpoints leave out results that are parts or duplicates of a more important result nearby. A result is dropped when all of these hold:
+All three endpoints leave out results that are parts or duplicates of a more important result nearby, so that `q=berlin` offers Berlin and not its districts; typing `spandau` still finds Spandau. A result is dropped when all of these hold:
 
 - it lies within 10 km of a more important result, or of another result already grouped with it;
 - both are in the same country and region;
-- one name contains the other as whole words, as `Delhi` and `Delhi Cantonment` do.
+- one name contains the other as whole words, as `Delhi` and `Delhi Cantonment` do. The name that the query matched counts too, so a district found through its other name "Berlin-Mitte" is treated as part of Berlin.
 
-Importance is by kind of place first: towns and cities (`PPL`, `PPLA`–`PPLA5`, `PPLC`, `PPLG`), then other populated places such as sections of a city, then administrative divisions and anything else. Within a kind the larger population wins. A national capital (`PPLC`) is never dropped, so `q=delhi` returns both Delhi and New Delhi but not Delhi Cantonment or Central Delhi.
+Importance is by kind of place first: towns and cities (`PPL`, `PPLA`–`PPLA5`, `PPLC`, `PPLG`), then other populated places such as sections of a city, then administrative divisions and anything else. Within a kind the larger population wins.
 
-Places that merely share the typed prefix (San Jose and Santa Clara) or lie in different regions (Kansas City, Missouri and Kansas City, Kansas) are not affected.
+- Around a city of a million people or more, the distance is 25 km for anything that is not itself a town or city and has fewer than a million people, since districts of a large city lie well beyond 10 km from its centre.
+- Two distinct towns are always listed separately, however close: a town gives way only to another entry of the same name (the same place listed twice) or to a city of a million or more that has absorbed it, as Delhi has Delhi Cantonment. Brighton and New Brighton, 5 km apart, both appear.
+- A national capital (`PPLC`) is never dropped, so `q=delhi` returns both Delhi and New Delhi but not Delhi Cantonment or Central Delhi.
+- Places that merely share the typed prefix (San Jose and Santa Clara) or lie in different regions (Kansas City, Missouri and Kansas City, Kansas) are not affected.
 
 ### /lookup
 
-Populated places only. `text` is meant to fill an autocomplete box, so it is kept short: `Name, Region (CC)`, with the region tidied.
+Populated places only. `text` is meant to fill an autocomplete box, so it is kept short: `Name, Region (CC)`.
 
 | Place | Region as stored | `text` |
 | --- | --- | --- |
 | Delhi | National Capital Territory of Delhi | `Delhi (IN)` |
 | New Delhi | National Capital Territory of Delhi | `New Delhi, Delhi (IN)` |
-| Mumbai | State of Mahārāshtra | `Mumbai, Mahārāshtra (IN)` |
-| Harburg | Free and Hanseatic City of Hamburg | `Harburg, Hamburg (DE)` |
-| Lagos | Lagos State | `Lagos (NG)` |
+| Mumbai | State of Mahārāshtra | `Mumbai, Maharashtra (IN)` |
+| Bandung | Jawa Barat | `Bandung, West Java (ID)` |
+| Jakarta | Daerah Khusus Ibukota Jakarta | `Jakarta (ID)` |
 | Mexico City | Ciudad de México | `Mexico City (MX)` |
-| Vienna | Wien | `Vienna (AT)` |
-| Nueva Delhi | Estado de Guerrero | `Nueva Delhi, Guerrero (MX)` |
+| Moscow | Moskva | `Moscow (RU)` |
+| Khimki | Moscow Oblast | `Khimki, Moscow Oblast (RU)` |
+| Munich | Bavaria | `Munich, Bavaria (DE)` |
 
-- A leading description of the kind of division ("State of", "Estado de", "National Capital Territory of") is removed.
-- The region is left out altogether when it is named after the place itself, under any of the place's search names: its local name or its name in another language.
+- The region shown is its conventional short name from the GeoNames region codes, which is usually the English one, in place of the formal local name.
+- The region is left out altogether when it is named after the place itself. This is decided from the stored names: either the region is one of the place's names (Ciudad de México for Mexico City), or one of the region's names is the place's (Moskva is also known as Moscow). A region that is a separate entity, such as Bavaria or Lazio, shares no name with its city and is kept.
 - Other fields are unchanged: `/localities` and `/search` still return the full region name in `admin_name`.
 
 ```json
