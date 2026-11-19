@@ -277,9 +277,36 @@ Ranking combines how expected the matched name is for the place, the logarithm o
 | `/lookup?q=Venice&loc=27.9,-82.5` | Venice, Florida |
 | `/lookup?q=pechino` | Beijing |
 
+### Overlapping results
+
+All three endpoints leave out results that are parts or duplicates of a more important result nearby. A result is dropped when all of these hold:
+
+- it lies within 10 km of a more important result, or of another result already grouped with it;
+- both are in the same country and region;
+- one name contains the other as whole words, as `Delhi` and `Delhi Cantonment` do.
+
+Importance is by kind of place first: towns and cities (`PPL`, `PPLA`–`PPLA5`, `PPLC`, `PPLG`), then other populated places such as sections of a city, then administrative divisions and anything else. Within a kind the larger population wins. A national capital (`PPLC`) is never dropped, so `q=delhi` returns both Delhi and New Delhi but not Delhi Cantonment or Central Delhi.
+
+Places that merely share the typed prefix (San Jose and Santa Clara) or lie in different regions (Kansas City, Missouri and Kansas City, Kansas) are not affected.
+
 ### /lookup
 
-Populated places only.
+Populated places only. `text` is meant to fill an autocomplete box, so it is kept short: `Name, Region (CC)`, with the region tidied.
+
+| Place | Region as stored | `text` |
+| --- | --- | --- |
+| Delhi | National Capital Territory of Delhi | `Delhi (IN)` |
+| New Delhi | National Capital Territory of Delhi | `New Delhi, Delhi (IN)` |
+| Mumbai | State of Mahārāshtra | `Mumbai, Mahārāshtra (IN)` |
+| Harburg | Free and Hanseatic City of Hamburg | `Harburg, Hamburg (DE)` |
+| Lagos | Lagos State | `Lagos (NG)` |
+| Mexico City | Ciudad de México | `Mexico City (MX)` |
+| Vienna | Wien | `Vienna (AT)` |
+| Nueva Delhi | Estado de Guerrero | `Nueva Delhi, Guerrero (MX)` |
+
+- A leading description of the kind of division ("State of", "Estado de", "National Capital Territory of") is removed.
+- The region is left out altogether when it is named after the place itself, under any of the place's search names: its local name or its name in another language.
+- Other fields are unchanged: `/localities` and `/search` still return the full region name in `admin_name`.
 
 ```json
 [

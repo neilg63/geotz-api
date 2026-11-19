@@ -39,6 +39,9 @@ pub struct Place {
     pub zone_name: Option<String>,
     pub admin_name: Option<String>,
     pub region: Option<String>,
+    /// Set by [`search`] when the region is just another name for the place
+    /// itself, as `Ciudad de México` is for Mexico City.
+    pub region_is_own_name: bool,
 }
 
 impl Place {
@@ -56,14 +59,20 @@ impl Place {
             zone_name: row.try_get("zone_name")?,
             admin_name: row.try_get("admin_name")?,
             region: row.try_get("region")?,
+            region_is_own_name: false,
         })
     }
 
-    /// `Name, Region (CC)`, leaving out parts that are missing or repeat
-    /// the name.
+    /// `Name, Region (CC)`. The region is shortened to its own name and
+    /// left out when missing or named after the place itself.
     pub fn label(&self) -> String {
         let mut text = self.name.clone();
-        if let Some(region) = self.region.as_deref().filter(|r| *r != self.name) {
+        let region = self
+            .region
+            .as_deref()
+            .filter(|_| !self.region_is_own_name)
+            .and_then(|region| super::tidy::region_for_label(&self.name, region));
+        if let Some(region) = region {
             text.push_str(", ");
             text.push_str(region);
         }
@@ -219,7 +228,7 @@ pub fn fold(text: &str) -> String {
 }
 
 /// Words of a name or query, folded.
-fn words(text: &str) -> Vec<String> {
+pub(super) fn words(text: &str) -> Vec<String> {
     fold(text)
         .split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
@@ -291,6 +300,47 @@ pub struct Match {
     /// The name that matched, which may be an alternate name.
     pub matched: String,
     pub score: f64,
+}
+
+/// Flags the results whose region is one of the place's own names, perhaps
+/// in another language, so that labels do not say the same thing twice:
+/// `Mexico City` in `Ciudad de México`, `Vienna` in `Wien`.
+async fn mark_regions_named_for_the_place(
+    pool: &SqlitePool,
+    matches: &mut [Match],
+) -> Result<(), ApiError> {
+    let with_region: Vec<i64> = matches
+        .iter()
+        .filter(|found| found.place.region.as_deref().is_some_and(|r| !r.is_empty()))
+        .map(|found| found.place.id)
+        .collect();
+    if with_region.is_empty() {
+        return Ok(());
+    }
+    let mut sql: QueryBuilder<Sqlite> =
+        QueryBuilder::new("SELECT pl_id, name FROM place_names WHERE pl_id IN (");
+    let mut ids = sql.separated(", ");
+    for id in &with_region {
+        ids.push_bind(*id);
+    }
+    sql.push(")");
+    let mut names: HashMap<i64, Vec<String>> = HashMap::new();
+    for row in sql.build().fetch_all(pool).await? {
+        names
+            .entry(row.try_get("pl_id")?)
+            .or_default()
+            .push(row.try_get("name")?);
+    }
+    for found in matches.iter_mut() {
+        let place = &mut found.place;
+        let (Some(region), Some(own)) = (place.region.as_deref(), names.get(&place.id)) else {
+            continue;
+        };
+        place.region_is_own_name = own
+            .iter()
+            .any(|name| super::tidy::named_after(region, name));
+    }
+    Ok(())
 }
 
 /// Scores one matching name of a place.
@@ -430,7 +480,9 @@ pub async fn search(
             .total_cmp(&a.score)
             .then_with(|| b.place.population.cmp(&a.place.population))
     });
+    let mut matches = super::tidy::without_overlaps(matches);
     matches.truncate(options.max.max(1));
+    mark_regions_named_for_the_place(pool, &mut matches).await?;
     Ok(matches)
 }
 
@@ -571,6 +623,7 @@ mod tests {
             zone_name: None,
             admin_name: None,
             region: Some("Scotland".into()),
+            region_is_own_name: false,
         };
         assert_eq!(place.label(), "Edinburgh, Scotland (GB)");
         place.region = Some("Edinburgh".into());

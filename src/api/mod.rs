@@ -3,6 +3,7 @@
 pub mod params;
 pub mod places;
 pub mod status;
+mod tidy;
 pub mod time;
 
 use std::path::Path;
